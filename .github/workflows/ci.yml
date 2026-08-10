@@ -1,0 +1,39 @@
+name: Zok Release Verification CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-verification:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository Codebase
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js Environment
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22.x'
+        cache: 'npm'
+
+    - name: Install Dependencies
+      run: npm ci
+
+    - name: Verify Production Bundler Output
+      run: npm run build
+
+    - name: Run API and frontend tests
+      run: npm test
+
+    - name: Run lint checks
+      run: npm run lint
+
+    - name: Run TypeScript checks
+      run: npm run typecheck
+
+    - name: Audit production dependencies
+      run: npm audit --omit=dev --audit-level=high

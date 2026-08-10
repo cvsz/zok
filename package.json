@@ -1,0 +1,45 @@
+{
+  "name": "zok-clone",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"node server.js\" \"vite --host 127.0.0.1\"",
+    "build": "vite build",
+    "start": "concurrently \"node server.js\" \"vite preview --host 127.0.0.1\"",
+    "lint": "eslint src server.js test scripts vite.config.js",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --test-reporter spec",
+    "dev:vite": "concurrently \"node server.js\" \"vite\"",
+    "build:vite": "vite build",
+    "preview:vite": "vite preview"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=9.0.0"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "cors": "^2.8.6",
+    "date-fns": "^3.6.0",
+    "express": "^5.2.1",
+    "lucide-react": "^0.378.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.12.7",
+    "tailwind-merge": "^2.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.12",
+    "@types/react": "^18.3.2",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^6.0.4",
+    "autoprefixer": "^10.4.19",
+    "concurrently": "^10.0.4",
+    "eslint": "^8.57.0",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.3",
+    "typescript": "^5.4.5",
+    "vite": "^8.2.0"
+  }
+}
