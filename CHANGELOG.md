@@ -23,6 +23,7 @@ The format follows Keep a Changelog principles and uses calendar dates while the
 - Draft PR #17 now adds source-bound resumable import checkpoints. Checkpoints contain version, tenant, deterministic normalized-source SHA-256 digest, next chat index, and total chat count.
 - `scripts/import-legacy-chats.js` supports `--checkpoint <file>` and `--resume`; checkpoint files are replaced atomically after each committed chat and resume fails closed if tenant/source/progress metadata does not match.
 - PostgreSQL service-backed interruption/restart regression verifies that a checkpoint is emitted only after a per-chat transaction commits, an injected interruption leaves only committed progress, and restart resumes from the next chat without duplicating earlier rows.
+- PostgreSQL service-backed cutover/rollback regression now imports deterministic chat state, verifies PostgreSQL mode serves the imported message state rather than divergent JSON messages, verifies an expected-but-unimported JSON chat fails the PostgreSQL read path with `503`, then restarts in JSON mode and verifies the rollback store remains readable and behaviorally intact.
 
 ### Changed
 - `server.js` delegates filesystem persistence to `createJsonStorage` rather than owning JSON write internals.
@@ -44,6 +45,7 @@ The format follows Keep a Changelog principles and uses calendar dates while the
 - Deterministic chat import foundation on draft PR #17: importer `a94042d1fc5dc2b013261167c26c96c5d433fac2`, CLI `24b10ae585bcd52bc87c0ff7cc20922e00d7ae0f`, structural replay comparison `becd258ef396e43732816fdc6d0ae5055c5fe6d8`, service-backed tests `abc559a7593d657a373cd645eea90295268f4ca0`, implementation CI `32367095289`, synchronized-head CI `32367337923`.
 - Resumable/checkpointed chat import slice: checkpointed importer `4ec62fd68bf7a786edc585918a12c23e6f6422f4`, atomic checkpoint CLI `a3790630253fb095f11c27613d3796f5682d556c`, interruption/restart and source-bound checkpoint tests `7616dfc8eb23cd7fc3bf0b2ea7e2e71fc928cfed`.
 - Resumability implementation-head CI `32372290510` passed release-control document checks, PostgreSQL service/client verification, `npm ci`, tests, lint, typecheck, production build, and production dependency audit.
+- Chat cutover/rollback regression: `4376ff02ec5260c5da69cae1bd7a5792644efbf4`; implementation-head CI `32377588551` passed release-control document checks, PostgreSQL service/client verification, `npm ci`, tests, lint, typecheck, production build, and production dependency audit.
 
 ### Repository state
 - PR #6 merged the PostgreSQL schema/RLS/transaction/repository/legacy-mapping foundation as `edbc8ba85a534e49fe3881b24c8a55560671421f`.
@@ -54,9 +56,9 @@ The format follows Keep a Changelog principles and uses calendar dates while the
 - Remaining open dependency PRs are separately scoped Dependabot updates and remain outside this P0 durable-data slice.
 
 ### Residual risks / not claimed
-- This import slice now proves validation, dry-run behavior, exact ordinary replay idempotency, deterministic source-bound checkpoints, and interruption/restart continuation against PostgreSQL CI.
+- This import track now proves validation, dry-run behavior, exact ordinary replay idempotency, deterministic source-bound checkpoints, interruption/restart continuation, and a bounded configuration-gated cutover/rollback read boundary against PostgreSQL CI.
+- The cutover/rollback regression is not a production cutover: `ZOK_CHAT_STORAGE=json` remains the default, chat metadata/unread/tags still come from JSON, and no production data has been migrated by this test.
 - Concurrent importer serialization is not proven; operators must not run competing imports for the same tenant/source until a concurrency policy is implemented and verified.
-- Production chat cutover and explicit rollback verification remain incomplete.
 - Chat metadata, unread state, tags, campaigns, integrations, AI config, and flow state remain JSON-backed.
 - Application-wide JSON→PostgreSQL cutover and backup/restore RPO/RTO evidence remain incomplete.
 - Production multi-user tenant identity/RBAC, append-only audit enforcement, shared session/rate-limit state, provider delivery controls, AI governance, and Gate D remain incomplete.
