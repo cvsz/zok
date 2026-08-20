@@ -27,6 +27,7 @@ The format follows Keep a Changelog principles and uses calendar dates while the
 - PostgreSQL transaction callbacks now expose the already-validated `tenantId` to repository code so repositories do not accept caller-supplied tenant overrides.
 - Durable-data execution now requires incremental normalized repository and route cutover rather than a monolithic JSON-in-PostgreSQL compatibility shortcut.
 - Legacy display-only message times are preserved as metadata rather than being invented as database timestamps during compatibility mapping.
+- Legacy mapper determinism regression coverage now clones the JSON-compatible fixture with JSON round-trip semantics so the existing ESLint environment remains green without widening globals.
 
 ### Verification evidence
 - JSON adapter red `32329601944`; subsequent adapter green.
@@ -43,11 +44,12 @@ The format follows Keep a Changelog principles and uses calendar dates while the
 - Contacts repository red `32345736541`; `32345808587` identified a test-harness whitespace bug; real transaction tenant-context red/green `32345984084` / `32346064982`.
 - Conversations/messages repository red/green `32346149065` / `32346242401`.
 - Real normalized relational repository integration green `32346343315`.
-- Legacy compatibility mapping contract added test-first in commit `26906f28c34d74077c3e496d0ddbf1ab21a080fb`; implementation commit `777af487395161b74fc1be472d1f5ddd448c73fb`. Final CI evidence is recorded only after the synchronized head completes.
+- Legacy compatibility mapping contract added test-first in commit `26906f28c34d74077c3e496d0ddbf1ab21a080fb`; implementation commit `777af487395161b74fc1be472d1f5ddd448c73fb`.
+- Synchronized mapper head CI `32346860728` exposed one ESLint `no-undef` regression for `structuredClone` after all 24 tests passed. Fix commit `42c1c4995de3f3a22d743f53dd6a630747a32884` replaced it with a JSON-compatible clone; CI `32351874076` then passed release-document checks, PostgreSQL service health, `npm ci`, all 24 tests, lint, typecheck, build, and production dependency audit.
 
 ### Release status
 - FOUNDATION HARDENED / NOT GOLD MASTER.
-- Live Express data routes remain JSON-backed. Legacy chat mapping is now explicit and contract-tested in source, but route cutover, JSON→PostgreSQL migration/rollback, backup/restore, production multi-user tenant identity/RBAC, shared session/rate-limit state, and remaining Gate D evidence remain incomplete.
+- Live Express data routes remain JSON-backed. Legacy chat mapping is now explicit, contract-tested, and CI-green, but route cutover, JSON→PostgreSQL migration/rollback, backup/restore, production multi-user tenant identity/RBAC, shared session/rate-limit state, and remaining Gate D evidence remain incomplete.
 
 ## [2026-08-10]
 
