@@ -115,7 +115,7 @@ This checklist is the operational companion to `exec-planing.md`. Items may be c
 - [x] Selected the highest-priority bounded incomplete item: durable-storage abstraction foundation.
 - [x] Added the failing storage contract test before production code; first CI run failed with `ERR_MODULE_NOT_FOUND` for the intentionally absent adapter.
 - [x] Added the minimal JSON storage adapter implementation after confirming the red test.
-- [ ] Final CI verification for the complete slice recorded.
+- [x] Final CI verification recorded: run `32329717269` passed release documents, `npm ci`, tests, lint, typecheck, build, and production dependency audit.
 - [x] Residual risk recorded: `server.js` still owns the live JSON persistence path and PostgreSQL is not implemented.
 - [x] `CHANGELOG.md` updated.
 - [x] `exec-planing.md` updated for current cycle evidence/status.
