@@ -32,25 +32,22 @@ Browser
        -> real pg.Pool
        -> BEGIN
        -> transaction-local app.tenant_id
-       -> parameterized set_config
+       -> normalized repositories receive verified tx.tenantId
        -> COMMIT / ROLLBACK
        -> guaranteed client release
+
+Normalized PostgreSQL repository foundation
+  -> contacts repository
+  -> conversations/messages repository
+  -> RLS + tenant-scoped composite FK enforcement
 
 Live application data path today
   -> explicit storage boundary
   -> createJsonStorage
   -> serialized atomic JSON persistence
-
-CI durable-data path
-  -> PostgreSQL 17 service
-  -> 001 initial schema
-  -> 002 forced tenant RLS
-  -> 003 tenant-scoped relational integrity
-  -> real Node pg.Pool isolation assertions
-  -> concurrency / rollback / replay verification
 ```
 
-The PostgreSQL driver, synchronized npm lockfile, real pool, transaction-local tenant context, configured-admin tenant principal, and fail-closed request-to-transaction binding are now verified. The live Express data routes still use the JSON adapter because the existing JSON-shaped API state has not yet been safely mapped to the normalized relational model. PostgreSQL is therefore not yet the live application data store.
+The PostgreSQL driver, synchronized npm lockfile, real pool, transaction-local tenant context, request binding, contacts repository, and conversations/messages repository are now verified against PostgreSQL 17. The live Express data routes remain JSON-backed because current `/api/chats` responses use a legacy aggregate shape that must be mapped deliberately to normalized contact/conversation/message records. PostgreSQL is not yet the live application store.
 
 ## 3. Master priority queue
 
@@ -68,7 +65,6 @@ The PostgreSQL driver, synchronized npm lockfile, real pool, transaction-local t
 - [ ] Complete independent security review, load test, backup/restore drill, privacy review, and release sign-off.
 
 ### P1 — Production capability
-
 - [ ] Real publicly claimed channel adapters and durable campaign workers.
 - [ ] Multi-touch attribution and reconciliation.
 - [ ] Migration import with dry-run/idempotency/resumability/rollback.
@@ -78,7 +74,6 @@ The PostgreSQL driver, synchronized npm lockfile, real pool, transaction-local t
 - [ ] Export/delete/retention privacy workflows.
 
 ### P2 — Product completeness
-
 - [ ] Persist onboarding/setup state.
 - [ ] Academy enrollment/completion/certificate verification.
 - [ ] Marketplace ownership/publishing/moderation/versioning.
@@ -87,7 +82,6 @@ The PostgreSQL driver, synchronized npm lockfile, real pool, transaction-local t
 - [ ] Frontend code splitting/performance budgets.
 
 ### P3 — Release polish
-
 - [ ] Accessibility and cross-browser/device regression.
 - [ ] Documentation consistency audit.
 - [ ] Release/migration notes and operator training.
@@ -104,18 +98,19 @@ Completed with current repository/CI evidence:
 - [x] Forced RLS and non-superuser/NOBYPASSRLS negative tests.
 - [x] Tenant-scoped composite foreign keys.
 - [x] Concurrent uniqueness/integrity verification.
-- [x] PostgreSQL transaction adapter with explicit transaction boundaries and transaction-local tenant context.
-- [x] `withIdentityTransaction` fail-closed identity binding.
-- [x] npm-generated synchronized `pg` dependency + lockfile.
-- [x] Real `pg.Pool` integration against PostgreSQL 17 with RLS isolation.
-- [x] Express configured-admin principal can carry validated `tenantId`.
-- [x] Request-to-transaction binding helper rejects missing tenant identity before delegation.
+- [x] PostgreSQL transaction adapter with real `pg.Pool`, explicit transactions, and transaction-local tenant context.
+- [x] Authenticated identity and request-to-transaction fail-closed binding.
+- [x] Transaction context exposes the verified tenant ID to repository code rather than accepting repository-level tenant overrides.
+- [x] Tenant-scoped contacts repository with validation and real PostgreSQL coverage.
+- [x] Tenant-scoped conversations/messages repository with validated channel/direction/sender semantics.
+- [x] Real contact → conversation → message integration under PostgreSQL RLS and tenant-scoped relational integrity.
 
 Still incomplete:
 
-- [ ] Define explicit normalized repository contracts for live Express resources instead of translating the entire JSON object implicitly.
-- [ ] Switch live Express routes from JSON repositories to PostgreSQL repositories with equivalent behavior/negative regression coverage.
-- [ ] Verify data import/cutover from existing JSON state and rollback.
+- [ ] Define an explicit compatibility mapping between legacy `/api/chats` payloads and normalized contact/conversation/message resources.
+- [ ] Cut over a bounded Express read/write route through `withRequestTransaction` and PostgreSQL repositories with equivalent auth/CSRF/validation behavior.
+- [ ] Migrate remaining live resources: campaigns, integrations, AI config, flow state.
+- [ ] Verify JSON→PostgreSQL import/cutover and rollback.
 - [ ] Verify backup/restore with recorded RPO/RTO.
 - [ ] Replace the bounded configured-admin tenant model with production user/tenant/role resolution and deny-by-default RBAC.
 
@@ -135,45 +130,41 @@ Tenant/RBAC security review, provider replay/contract evidence, AI evaluations, 
 
 ## 6. Current CI target state
 
-CI enforces release-document presence, PostgreSQL 17 service health, real database migrations and pool/RLS tests, `npm ci`, tests, lint, typecheck, build, production dependency audit, least-privilege permissions, and concurrency cancellation. Workflow failures remain release blockers until triaged.
+CI enforces release-document presence, PostgreSQL 17 service health, real migrations, pool/RLS and normalized repository integration, `npm ci`, tests, lint, typecheck, build, production dependency audit, least-privilege permissions, and concurrency cancellation. Workflow failures remain release blockers until triaged.
 
 ## 7. Execution order from current head
 
 Unless a security/CI defect supersedes it:
 
-1. Define narrow PostgreSQL repository contracts for the highest-value live resources (contacts/conversations/messages first) with relational read/write semantics and tenant transaction enforcement.
-2. Wire those Express routes through request identity → PostgreSQL transaction → repository, preserving current API regression behavior.
-3. Migrate remaining live resources (campaigns, integrations, AI/flow state) without introducing a monolithic JSON-in-PostgreSQL compatibility shortcut.
-4. Build and verify JSON→PostgreSQL import/cutover + rollback and backup/restore evidence.
-5. Implement production tenant-aware user identity, deny-by-default RBAC, and append-only audit foundation.
-6. Move sessions and rate-limit state to shared production storage.
+1. Define and test the legacy `/api/chats` ↔ normalized contact/conversation/message mapping without changing the live route.
+2. Cut over one bounded chat read/write path through authenticated request → `withRequestTransaction` → normalized PostgreSQL repositories, preserving current security and API regression behavior.
+3. Expand chat/message cutover only after the bounded route is green; retain an explicit rollback switch until import/cutover evidence exists.
+4. Add PostgreSQL repositories for campaigns and integrations, then AI/flow state.
+5. Build and verify JSON→PostgreSQL import/cutover + rollback and backup/restore evidence.
+6. Implement production tenant-aware user identity, deny-by-default RBAC, append-only audit foundation, then shared sessions/rate-limit state.
 7. Provider-neutral event + queue/retry/idempotency base and first channel adapter/consent enforcement.
 8. AI policy/evaluation service, privacy lifecycle, observability/load/DR/security exercises.
 9. Product completeness and Gold Master polish.
 
 Dependabot major-version PRs remain separate until independently compatibility-tested.
 
-## 8. Current execution evidence — 2026-08-20 real PostgreSQL pool + request tenant binding
+## 8. Current execution evidence — 2026-08-20 normalized relational repository foundation
 
 **Branch:** `feat/postgres-storage-foundation`  
 **PR:** #6 (draft)
 
-- Generated `pg` dependency + lockfile through npm in a temporary branch workflow and removed the temporary write-enabled workflow immediately after synchronization.
-- Real pool integration TDD red: `32344793562` failed because `createPostgresPool` did not exist.
-- `32344862826` exposed a test-isolation race when migration tests created `pgcrypto` concurrently on one database. The production migration was not weakened; the new integration test was isolated to its own database.
-- Real `pg.Pool` + RLS integration green: `32344957870`.
-- Express tenant-principal red: `32345044007` returned `{email, role}` without tenant context.
-- Added validated `ZOK_ADMIN_TENANT_ID`; malformed configured tenant IDs fail startup validation and configured tenant context is included in login/session principal. Green: `32345360432`.
-- Request-to-transaction binding red: `32345449008` because the helper did not exist.
-- Added `withRequestTransaction`, which requires an authenticated valid tenant identity before delegating to `withIdentityTransaction`. Green: `32345518040`.
+- Contacts repository test-first red `32345736541` (missing repository). `32345808587` then exposed a whitespace-sensitive fake-query bug; production SQL was not changed to satisfy the faulty test stub.
+- Real transaction-context red `32345984084` proved `tx.tenantId` was absent. The transaction boundary now exposes the already-validated tenant ID; green `32346064982` also verified contacts repository behavior against PostgreSQL.
+- Conversations/messages repository test-first red `32346149065`; implementation green `32346242401` with all release gates passing.
+- Real relational integration `32346343315` verified tenant A contact→conversation→message writes, tenant B conversation isolation, cross-tenant relationship rejection at the composite-FK boundary, RLS enforcement, and all standard gates.
 
 ### Residual boundary
 
-The parent durable-data P0 item stays unchecked. The verified PostgreSQL boundary is ready for relational repositories, but all live Express data routes still call the JSON adapter. There is no verified JSON→relational import/cutover/rollback or backup/restore drill. The configured-admin `tenantId` is a bounded transitional principal, not a complete production multi-user identity/RBAC model.
+The parent durable-data P0 item stays unchecked. Repository infrastructure is now real and tenant-scoped, but live Express data routes still use the JSON adapter. No verified legacy payload mapping, JSON→relational import/cutover/rollback, backup/restore drill, or production multi-user identity/RBAC model exists yet.
 
 ### Next safe unit
 
-Define a tenant-scoped PostgreSQL repository for contacts/conversations/messages and contract-test it against PostgreSQL 17. Then wire a bounded Express read/write route through `withRequestTransaction` without changing unrelated JSON-backed routes. Expand only after equivalent API/security behavior is green.
+Create a pure compatibility mapper for the legacy chat API shape and contract-test it against normalized repository records. Then introduce a configuration-gated bounded PostgreSQL chat route in tests only, preserving JSON as the rollback path until end-to-end API and migration evidence is green.
 
 ## 9. Release decision
 
