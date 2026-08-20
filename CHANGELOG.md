@@ -8,33 +8,32 @@ The format follows Keep a Changelog principles and uses calendar dates while the
 
 ### Added
 - `IMPLEMENTATION-CHECKLIST.md` as the evidence-based operational release checklist.
-- Explicit P0-P3 execution priorities and Gold Master blockers in `exec-planing.md`.
-- Release-control synchronization rule requiring `CHANGELOG.md`, `exec-planing.md`, and `IMPLEMENTATION-CHECKLIST.md` to be updated together after each execution cycle.
-- `server/storage/json-storage.js` as the first storage-boundary slice, exposing a tested JSON adapter contract for `read()` and serialized `update()` operations.
-- `test/storage.test.js` covering initialization, concurrent mutation serialization, atomic temporary-file cleanup, and corrupt-state fail-closed behavior.
-- Initial PostgreSQL data-model DDL in `server/storage/postgres/migrations/001_initial.up.sql` with tenant-scoped tables for tenants, roles/users, contacts/conversations/messages, campaigns, integrations, consent, sessions, and audit events, plus explicit rollback DDL in `001_initial.down.sql`.
-- `test/postgres-schema.test.js` as a structural regression contract for required tables, tenant ownership foreign keys, scoped uniqueness, constrained status/direction fields, and rollback coverage.
-- PostgreSQL 17 service-backed CI verification with `test/postgres-migration-runtime.test.js` executing migration up, down, replayed up, and final rollback against a real database.
-- `scripts/postgres-migrations.js` as the minimal migration executor used by the runtime migration test.
+- `server/storage/json-storage.js` and `test/storage.test.js` as the tested local storage-boundary foundation.
+- Initial PostgreSQL schema and rollback migrations in `server/storage/postgres/migrations/001_initial.*.sql` for tenants, roles/users, contacts/conversations/messages, campaigns, integrations, consent, sessions, and audit events.
+- `test/postgres-schema.test.js` as the structural schema contract.
+- PostgreSQL 17 service-backed CI migration execution via `scripts/postgres-migrations.js` and `test/postgres-migration-runtime.test.js`.
+- `002_tenant_rls.*.sql` enabling and forcing row-level security on tenant-owned tables with fail-closed `app.tenant_id` policies.
+- Non-superuser/NOBYPASSRLS negative tests proving cross-tenant reads are filtered, cross-tenant writes are rejected, and missing tenant context exposes no tenant rows.
+- `003_tenant_relational_integrity.*.sql` adding tenant-scoped composite foreign keys so globally valid IDs cannot link objects across tenants.
+- PostgreSQL concurrent-write integrity verification proving tenant-scoped uniqueness remains correct under competing writes.
 
 ### Changed
-- Refreshed `exec-planing.md` into the canonical master execution ledger for the current Vite + React + Express architecture.
-- Clarified that UI simulations, demo metrics, mock integrations, and local AI behavior are not production evidence.
-- Defined verification Gates A-D covering dependencies, tests/static checks, production-shaped runtime smoke, and external enterprise release evidence.
-- Began P0 durable-storage work with an isolated adapter contract; the Express request path is not yet switched to that adapter.
-- PostgreSQL migrations are now executed and rolled back in CI; this does not yet mean the live Express runtime uses PostgreSQL.
-- `.github/workflows/ci.yml` now provisions a health-checked PostgreSQL 17 service for migration verification while retaining least-privilege repository permissions and the existing test/lint/typecheck/build/audit gates.
+- Refreshed `exec-planing.md` into the canonical master execution ledger with P0-P3 priorities and evidence gates.
+- `.github/workflows/ci.yml` provisions a health-checked PostgreSQL 17 service while retaining least-privilege permissions, concurrency cancellation, document checks, tests, lint, typecheck, build, and production dependency audit.
+- PostgreSQL migrations now execute and roll back against a real database in CI; this does not yet mean the live Express runtime uses PostgreSQL.
+- Durable-data security now has both RLS isolation and tenant-scoped relational-integrity enforcement at the database layer.
 
 ### Verification evidence
-- JSON storage TDD red: CI run `32329601944` failed on the intentionally absent adapter; the existing API test remained green.
-- PostgreSQL schema TDD red: CI run `32330472344` failed on intentionally absent migration files; existing API and JSON storage tests remained green.
-- PostgreSQL schema green: CI run `32330521144` passed release-document checks, `npm ci`, tests, lint, typecheck, build, and production dependency audit.
-- PostgreSQL runtime-migration TDD red: CI run `32330868918` started a healthy PostgreSQL 17 service and failed only because `scripts/postgres-migrations.js` was intentionally absent.
-- Runtime migration green: CI run `32330980037` passed PostgreSQL service initialization, real migration up/down/replay verification, all tests, lint, typecheck, build, and `npm audit --omit=dev --audit-level=high`.
+- JSON adapter TDD red: CI `32329601944`; subsequent adapter verification green.
+- PostgreSQL schema TDD red: CI `32330472344`; schema green: CI `32330521144`.
+- Runtime migration TDD red: CI `32330868918`; migration up/down/replay green: CI `32330980037`.
+- Tenant RLS TDD red: CI `32331153421`; non-superuser tenant-isolation green: CI `32331262316`.
+- Tenant relational-integrity TDD red: CI `32331342959`; composite-FK enforcement green: CI `32331409295`.
+- Concurrent PostgreSQL integrity: CI `32331479289` passed with exactly one successful write among 12 competing inserts for the same tenant/email key, followed by all lint/typecheck/build/audit gates.
 
 ### Release status
 - FOUNDATION HARDENED / NOT GOLD MASTER.
-- Parent P0 durable PostgreSQL cutover remains incomplete because `server.js` still serves the live JSON persistence path and no production PostgreSQL adapter/connection pool/transaction boundary is wired yet.
+- Parent P0 durable PostgreSQL cutover remains incomplete: `server.js` still owns the live JSON request path and no production PostgreSQL application adapter, connection pool, transaction boundary, production cutover, or verified backup/restore drill exists yet.
 
 ## [2026-08-10]
 
@@ -46,8 +45,9 @@ The format follows Keep a Changelog principles and uses calendar dates while the
 - Added test, lint, typecheck, build, and production dependency audit release gates.
 
 ### Known release blockers
-- Durable multi-tenant database production cutover remains incomplete.
+- Durable PostgreSQL application-runtime cutover remains incomplete.
 - Enterprise identity/RBAC/audit governance remains incomplete.
+- Shared production session/rate-limit state remains incomplete.
 - Real channel/POS adapters and durable queue workers remain incomplete.
 - AI policy/evaluation service remains incomplete.
 - Independent security, load, disaster-recovery, privacy, and production-edge evidence remain incomplete.
