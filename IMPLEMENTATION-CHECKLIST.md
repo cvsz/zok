@@ -39,7 +39,7 @@ This checklist is the operational companion to `exec-planing.md`. Items may be c
 - [x] Tenant-scoped conversations/messages repository implemented with validated channels/directions/sender types. Evidence: red `32346149065`, green `32346242401`.
 - [x] Real PostgreSQL 17 integration verifies contact → conversation → message writes for tenant A, no conversation visibility for tenant B, and database rejection of cross-tenant contact references. Evidence: CI `32346343315`.
 - [x] Legacy `/api/chats` aggregate compatibility mapping is explicit and deterministic: stable legacy contact/thread/message IDs, sender→direction mapping, metadata preservation, and fail-closed malformed-input handling. Evidence: test-first commit `26906f28c34d74077c3e496d0ddbf1ab21a080fb`, implementation `777af487395161b74fc1be472d1f5ddd448c73fb`, mapper CI repair `42c1c4995de3f3a22d743f53dd6a630747a32884`, green CI `32351874076`.
-- [ ] Bounded request-bound legacy chat PostgreSQL runtime verified in CI. Source commits: repository lookup/read `d2440a7d9c6d94fb510a24c92dc68c8dd91bd8af`, runtime `e95d2751804bed7c7a3b9ff055b5108829de8a54`, regression tests `81abadeb91261ebeb232ca71d3fed88069f40223`; branch CI pending.
+- [x] Bounded request-bound legacy chat PostgreSQL runtime verified in CI. Evidence: repository lookup/read `d2440a7d9c6d94fb510a24c92dc68c8dd91bd8af`, runtime `e95d2751804bed7c7a3b9ff055b5108829de8a54`, regression tests `81abadeb91261ebeb232ca71d3fed88069f40223`, green CI `32357209712`.
 - [ ] Live Express data routes switched from JSON to PostgreSQL with equivalent API regression coverage.
 - [ ] Production JSON→PostgreSQL data migration/cutover and rollback procedure verified.
 - [ ] Backup and restore procedure verified with recorded RPO/RTO.
@@ -134,13 +134,13 @@ This checklist is the operational companion to `exec-planing.md`. Items may be c
 - [x] Added exact external-thread lookup and ordered message-read primitives to the normalized conversations repository in `d2440a7d9c6d94fb510a24c92dc68c8dd91bd8af`.
 - [x] Added authenticated request → `withRequestTransaction` → normalized conversations repository bounded read/write runtime in `e95d2751804bed7c7a3b9ff055b5108829de8a54`.
 - [x] Added regression coverage in `81abadeb91261ebeb232ca71d3fed88069f40223` for tenant binding, deterministic legacy IDs, read/write semantics, sender normalization, missing imported threads, and fail-closed invalid inputs.
-- [ ] CI verification for this branch is green across release docs, PostgreSQL service, `npm ci`, tests, lint, typecheck, build, and production dependency audit.
+- [x] CI `32357209712` passed release-control document checks, PostgreSQL service/client verification, `npm ci`, tests, lint, typecheck, build, and production dependency audit.
 - [x] Residual risk is explicit: `server.js` remains JSON-backed; this slice does not provide configuration-gated Express cutover, JSON import/rollback, backup/restore, or production RBAC.
-- [x] `CHANGELOG.md`, `exec-planing.md`, and `IMPLEMENTATION-CHECKLIST.md` synchronized before opening the PR; CI evidence must be added before marking the runtime slice complete.
+- [x] `CHANGELOG.md`, `exec-planing.md`, and `IMPLEMENTATION-CHECKLIST.md` synchronized with implementation evidence, CI `32357209712`, residual risks, and next safe unit.
 
 ## Next bounded unit
 
-- [ ] After green branch CI, wire the runtime behind one explicit configuration gate in the existing chat read/write route, preserve current auth/CSRF/validation/API behavior, keep JSON as rollback, and add PostgreSQL service-backed API regression tests before expanding cutover.
+- [ ] Wire the CI-green runtime behind one explicit configuration gate in the existing chat read/write route, preserve current auth/CSRF/validation/API behavior, keep JSON as rollback, and add PostgreSQL service-backed API regression tests before expanding cutover.
 
 ## Gold Master rule
 
