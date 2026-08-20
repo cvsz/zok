@@ -29,13 +29,15 @@ This checklist is the operational companion to `exec-planing.md`. Items may be c
 - [x] Concurrent PostgreSQL write/integrity test added. Twelve competing inserts for one tenant/email key result in exactly one persisted row. Evidence: CI `32331479289`.
 - [x] First local storage-boundary slice added: tested JSON adapter contract in `server/storage/json-storage.js`.
 - [x] Storage abstraction is now the live Express persistence boundary rather than `server.js`-owned JSON functions. Evidence: `server.js`, `test/storage-boundary-wiring.test.js`, CI `32333372481`.
-- [ ] PostgreSQL application adapter with connection pooling and explicit transaction boundaries implemented.
+- [x] PostgreSQL transaction adapter contract implemented with an injected pool, explicit transaction boundaries, transaction-local `app.tenant_id`, rollback, guaranteed release, and pool shutdown. Evidence: `server/storage/postgres-storage.js`, `test/postgres-storage.test.js`, CI `32335166312`.
+- [x] Authenticated identity objects can be fail-closed bound to their validated tenant UUID at the PostgreSQL transaction boundary via `withIdentityTransaction`. Evidence: TDD red CI `32337912124`, green CI `32337964164`.
+- [ ] Production PostgreSQL Node driver/pool installed and wired with a synchronized lockfile plus real pool integration coverage.
 - [ ] Live Express request path switched from JSON to PostgreSQL with equivalent API regression coverage.
 - [ ] Production data migration/cutover and rollback procedure verified.
 - [ ] Backup and restore procedure verified with recorded RPO/RTO.
 
 ### Identity and governance
-- [ ] Tenant-aware principal model implemented in the application request path.
+- [ ] Tenant-aware principal model implemented in the application request path. Current partial foundation: the PostgreSQL adapter accepts an identity carrying a validated `tenantId`, but Express sessions still do not carry one.
 - [ ] Deny-by-default RBAC implemented.
 - [ ] Field/channel-level authorization tests added where applicable.
 - [ ] Session revocation implemented.
@@ -111,16 +113,17 @@ This checklist is the operational companion to `exec-planing.md`. Items may be c
 - [ ] Support/operator training material prepared.
 - [ ] Gold Master evidence record signed.
 
-## Current execution cycle — 2026-08-20 Express storage-boundary wiring
+## Current execution cycle — 2026-08-20 PostgreSQL identity-to-tenant transaction binding
 
 - [x] Reused active draft PR #6; no duplicate implementation PR was created.
-- [x] Added `test/storage-boundary-wiring.test.js` before implementation.
-- [x] TDD red confirmed in CI `32333253897`: the new architecture test failed while PostgreSQL service/docs/install stages remained healthy.
-- [x] Removed `server.js`-owned filesystem persistence implementation and instantiated the tested `createJsonStorage` adapter instead.
-- [x] `readDB()` and `updateDB()` now delegate to the adapter, preserving existing route call sites and behavior.
-- [x] Green verification confirmed in CI `32333372481`: storage-boundary test, API regression tests, PostgreSQL tests, lint, typecheck, build, and production dependency audit passed.
-- [x] Residual risk recorded: the live adapter is still JSON-backed; PostgreSQL application pool/transaction/tenant-context wiring and production cutover remain incomplete.
-- [x] `CHANGELOG.md`, `exec-planing.md`, and `IMPLEMENTATION-CHECKLIST.md` synchronized.
+- [x] Confirmed the pre-cycle adapter foundation was green in CI `32335166312`.
+- [x] Probed Express session tenant identity first; CI `32337797235` failed because login/me did not expose `tenantId`. The exploratory test was reverted because the current connector could not safely patch the large `server.js` file without whole-file replacement; no server capability is claimed from that probe.
+- [x] Added `withIdentityTransaction` contract tests before implementation.
+- [x] TDD red confirmed in CI `32337912124`: identity transaction calls failed before the method existed.
+- [x] Implemented fail-closed identity validation and delegation to the existing transaction-local tenant boundary in `server/storage/postgres-storage.js`.
+- [x] Green verification confirmed in CI `32337964164`: `npm ci`, tests, lint, typecheck, build, and production dependency audit passed.
+- [x] Residual risks recorded: no production Node PostgreSQL driver/pool is wired; Express authenticated principals still lack tenant IDs; no request-to-transaction end-to-end tenant proof; JSON remains the live adapter; cutover/rollback and backup/restore remain incomplete.
+- [x] `CHANGELOG.md`, `exec-planing.md`, and `IMPLEMENTATION-CHECKLIST.md` synchronized with this bounded result.
 
 ## Gold Master rule
 
