@@ -24,6 +24,8 @@ The format follows Keep a Changelog principles and uses calendar dates while the
 - `scripts/import-legacy-chats.js` supports `--checkpoint <file>` and `--resume`; checkpoint files are replaced atomically after each committed chat and resume fails closed if tenant/source/progress metadata does not match.
 - PostgreSQL service-backed interruption/restart regression verifies that a checkpoint is emitted only after a per-chat transaction commits, an injected interruption leaves only committed progress, and restart resumes from the next chat without duplicating earlier rows.
 - PostgreSQL service-backed cutover/rollback regression now imports deterministic chat state, verifies PostgreSQL mode serves the imported message state rather than divergent JSON messages, verifies an expected-but-unimported JSON chat fails the PostgreSQL read path with `503`, then restarts in JSON mode and verifies the rollback store remains readable and behaviorally intact.
+- PostgreSQL storage now exposes a bounded session advisory-lock primitive used by legacy chat import coordination. Same-tenant/source import lock keys are derived from tenant UUID plus the deterministic normalized-source digest; competing acquisition fails closed instead of waiting silently.
+- PostgreSQL service-backed concurrency regression verifies a second importer for the same tenant/source is rejected while the first importer holds the database lock, committed rows remain singular, and ordinary replay succeeds after the lock is released.
 
 ### Changed
 - `server.js` delegates filesystem persistence to `createJsonStorage` rather than owning JSON write internals.
@@ -33,7 +35,8 @@ The format follows Keep a Changelog principles and uses calendar dates while the
 - When `ZOK_CHAT_STORAGE=postgres`, `/api/chats` message history and `/api/chats/:id/messages` persistence use the request-bound PostgreSQL runtime; auth, CSRF, validation, and legacy response shape remain in place.
 - Chat metadata, unread state, tags, and all non-chat resources remain JSON-backed. Missing expected `legacy-chat:<id>` imports fail closed instead of silently falling back to JSON message history.
 - PR #16 is now recorded as merged rather than draft/unmerged. It merged as `dc677799cbac6ee793a612330313b1c39f5cc7ca` after synchronized-head CI `32362766907` passed.
-- Legacy chat import write execution now commits one validated chat per tenant-scoped transaction so durable checkpoint progress can represent a completed transaction boundary. This intentionally permits partial-but-restartable import state; it does not claim concurrent importer serialization.
+- Legacy chat import write execution now commits one validated chat per tenant-scoped transaction so durable checkpoint progress can represent a completed transaction boundary.
+- Legacy chat write imports now hold a database-backed same-tenant/source advisory lock across the import loop and checkpoint callbacks. This verifies same-source exclusion only; it does not claim safe operational parallelism for arbitrary different sources or tenants.
 
 ### Verification evidence
 - PostgreSQL schema CI `32330521144`; migration runtime `32330980037`; tenant RLS `32331262316`; relational integrity `32331409295`; concurrent integrity `32331479289`.
@@ -46,6 +49,7 @@ The format follows Keep a Changelog principles and uses calendar dates while the
 - Resumable/checkpointed chat import slice: checkpointed importer `4ec62fd68bf7a786edc585918a12c23e6f6422f4`, atomic checkpoint CLI `a3790630253fb095f11c27613d3796f5682d556c`, interruption/restart and source-bound checkpoint tests `7616dfc8eb23cd7fc3bf0b2ea7e2e71fc928cfed`.
 - Resumability implementation-head CI `32372290510` passed release-control document checks, PostgreSQL service/client verification, `npm ci`, tests, lint, typecheck, production build, and production dependency audit.
 - Chat cutover/rollback regression: `4376ff02ec5260c5da69cae1bd7a5792644efbf4`; implementation-head CI `32377588551` passed release-control document checks, PostgreSQL service/client verification, `npm ci`, tests, lint, typecheck, production build, and production dependency audit.
+- Same-tenant/source import coordination: advisory storage primitive `e17e7048f2664d20a2b1520635b09d1b716ac413`, importer coordination `1a9c46472dd67322cc9ad5c3681d3f041c5e168c`, service-backed concurrency regression `962e603e66e96ed454a117b05b4d23662f058c1a`; implementation-head CI `32383484862` passed release-control documents, PostgreSQL service/client verification, `npm ci`, tests, lint, typecheck, production build, and production dependency audit.
 
 ### Repository state
 - PR #6 merged the PostgreSQL schema/RLS/transaction/repository/legacy-mapping foundation as `edbc8ba85a534e49fe3881b24c8a55560671421f`.
@@ -56,9 +60,9 @@ The format follows Keep a Changelog principles and uses calendar dates while the
 - Remaining open dependency PRs are separately scoped Dependabot updates and remain outside this P0 durable-data slice.
 
 ### Residual risks / not claimed
-- This import track now proves validation, dry-run behavior, exact ordinary replay idempotency, deterministic source-bound checkpoints, interruption/restart continuation, and a bounded configuration-gated cutover/rollback read boundary against PostgreSQL CI.
+- This import track now proves validation, dry-run behavior, exact ordinary replay idempotency, deterministic source-bound checkpoints, interruption/restart continuation, bounded configuration-gated cutover/rollback read behavior, and same-tenant/source competing-import exclusion against PostgreSQL CI.
 - The cutover/rollback regression is not a production cutover: `ZOK_CHAT_STORAGE=json` remains the default, chat metadata/unread/tags still come from JSON, and no production data has been migrated by this test.
-- Concurrent importer serialization is not proven; operators must not run competing imports for the same tenant/source until a concurrency policy is implemented and verified.
+- Same-tenant/source competing importers now fail closed, but operational parallel import for different sources/tenants, lock observability/timeout policy, and multi-process runbook behavior are not claimed.
 - Chat metadata, unread state, tags, campaigns, integrations, AI config, and flow state remain JSON-backed.
 - Application-wide JSON→PostgreSQL cutover and backup/restore RPO/RTO evidence remain incomplete.
 - Production multi-user tenant identity/RBAC, append-only audit enforcement, shared session/rate-limit state, provider delivery controls, AI governance, and Gate D remain incomplete.
