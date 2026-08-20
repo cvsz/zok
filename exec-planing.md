@@ -30,6 +30,14 @@ Browser
   -> explicit storage boundary (`createJsonStorage` today)
   -> serialized atomic JSON persistence
 
+PostgreSQL adapter contract
+  -> injected pool contract
+  -> explicit transaction boundary
+  -> validated tenant UUID / authenticated identity tenantId
+  -> transaction-local `app.tenant_id`
+  -> parameterized `set_config`
+  -> commit/rollback + guaranteed client release
+
 CI durable-data path
   -> PostgreSQL 17 service
   -> 001 initial schema
@@ -39,7 +47,7 @@ CI durable-data path
   -> rollback/replay verification
 ```
 
-The Express request path no longer owns filesystem persistence logic directly: `readDB()`/`updateDB()` delegate through the tested storage adapter boundary. The active adapter remains JSON-backed. The PostgreSQL foundation has real-service migration execution, fail-closed tenant row isolation, tenant-scoped relational keys, and concurrent uniqueness evidence, but PostgreSQL is not yet the application runtime store.
+The Express request path no longer owns filesystem persistence logic directly: `readDB()`/`updateDB()` delegate through the tested storage adapter boundary. The active Express adapter remains JSON-backed. The PostgreSQL foundation now includes a pool-injected transaction adapter contract with fail-closed tenant validation and an authenticated-identity binding entry point, but no production Node PostgreSQL pool driver is installed/wired and Express sessions do not yet carry tenant IDs. PostgreSQL is therefore not yet the application runtime store.
 
 ## 3. Master priority queue
 
@@ -94,11 +102,14 @@ Completed with current repository/CI evidence:
 - [x] RLS negative tests through a non-superuser `NOBYPASSRLS` application role.
 - [x] Tenant-scoped composite foreign keys preventing cross-tenant object references.
 - [x] Concurrent PostgreSQL uniqueness/integrity verification.
+- [x] Pool-injected PostgreSQL transaction boundary with explicit begin/commit/rollback, transaction-local tenant context, guaranteed release, and pool shutdown.
+- [x] Authenticated identity object can be fail-closed bound to its validated `tenantId` before entering the tenant transaction boundary.
 
 Still incomplete:
 
-- [ ] PostgreSQL application adapter with connection pooling and explicit transaction boundaries.
-- [ ] Application-authenticated tenant context safely bound to every PostgreSQL transaction.
+- [ ] Production PostgreSQL Node driver/pool installed with a synchronized lockfile and real pool integration coverage.
+- [ ] Express-authenticated session/principal carries a validated tenant ID.
+- [ ] Application-authenticated tenant context proven end-to-end from request principal through every PostgreSQL transaction.
 - [ ] Live Express persistence switched from JSON adapter to PostgreSQL adapter with equivalent regression coverage.
 - [ ] Production cutover from JSON to PostgreSQL with data migration and rollback evidence.
 - [ ] Backup/restore drill and recorded RPO/RTO.
@@ -125,35 +136,38 @@ CI currently enforces release-document presence, PostgreSQL 17 service health, r
 
 Unless a security/CI defect supersedes it:
 
-1. Implement PostgreSQL application adapter/pool/transactions and bind authenticated tenant context per transaction.
-2. Switch the Express storage boundary from JSON to PostgreSQL with equivalent API regression coverage.
-3. Cut over production persistence with migration/rollback and backup/restore evidence.
-4. Implement tenant-aware identity/RBAC + append-only audit foundation.
-5. Shared session/rate-limit state.
-6. Provider-neutral event + queue/retry/idempotency base and first channel adapter/consent enforcement.
-7. AI policy/evaluation service, privacy lifecycle, observability/load/DR/security exercises.
-8. Product completeness and Gold Master polish.
+1. Install/wire a real PostgreSQL Node pool driver with a synchronized lockfile and exercise the transaction adapter against the PostgreSQL CI service.
+2. Add a validated tenant ID to the authenticated application principal/session and use `withIdentityTransaction` at the database boundary.
+3. Switch the Express storage boundary from JSON to PostgreSQL with equivalent API regression coverage.
+4. Cut over production persistence with migration/rollback and backup/restore evidence.
+5. Implement deny-by-default RBAC + append-only audit foundation.
+6. Shared session/rate-limit state.
+7. Provider-neutral event + queue/retry/idempotency base and first channel adapter/consent enforcement.
+8. AI policy/evaluation service, privacy lifecycle, observability/load/DR/security exercises.
+9. Product completeness and Gold Master polish.
 
 Dependabot major-version PRs remain separate until independently compatibility-tested.
 
-## 8. Current execution evidence — 2026-08-20 Express storage-boundary wiring
+## 8. Current execution evidence — 2026-08-20 PostgreSQL identity-to-tenant transaction binding
 
 **Branch:** `feat/postgres-storage-foundation`  
 **PR:** #6 (draft)
 
-- Added `test/storage-boundary-wiring.test.js` before implementation.
-- TDD red: CI `32333253897` failed on the new architecture requirement while the PostgreSQL service, release-control checks, and dependency installation remained healthy.
-- Refactored `server.js` to import and instantiate `createJsonStorage`, preserving the existing default data and validation contract.
-- Removed `server.js`-owned filesystem persistence internals (`atomicWrite`, `ensureDB`, local mutation queue) and made `readDB()`/`updateDB()` delegate to the adapter.
-- Green: CI `32333372481` passed the storage-boundary test, existing API regression suite, PostgreSQL migration/isolation/integrity tests, lint, typecheck, production build, and production dependency audit.
+- Reused the existing durable-data PR; no duplicate PR was created.
+- Confirmed the current branch was green at CI `32335166312` before this cycle.
+- Explored direct Express-session tenant propagation with a failing regression probe; CI `32337797235` failed exactly because login/me responses lacked `tenantId`. That exploratory test was reverted because the current connector could not safely patch the large `server.js` file without whole-file replacement. No server-side tenant-principal capability is claimed from that probe.
+- Added TDD coverage in `test/postgres-storage.test.js` for an authenticated identity object carrying `tenantId` and for fail-closed rejection before pool acquisition when the identity lacks a valid tenant ID.
+- TDD red: CI `32337912124` failed because `withIdentityTransaction` did not exist.
+- Implemented `withIdentityTransaction(identity, operation)` in `server/storage/postgres-storage.js`; it validates identity shape and tenant UUID, then delegates to the existing transaction-local tenant boundary.
+- Green: CI `32337964164` passed `npm ci`, all tests, lint, typecheck, production build, and production dependency audit.
 
 ### Residual boundary
 
-The parent durable-data P0 item stays unchecked. The active adapter is still JSON-backed; no PostgreSQL application connection pool/transaction adapter is wired, authenticated tenant context is not yet bound to application DB transactions, and production migration/cutover/rollback plus backup/restore evidence do not exist.
+The parent durable-data and tenant-aware identity P0 items stay unchecked. The live Express adapter remains JSON-backed; no production PostgreSQL Node pool driver is installed, Express sessions still do not carry tenant IDs, and no end-to-end request-principal-to-PostgreSQL-transaction path has been proven. Production migration/cutover/rollback and backup/restore evidence also remain absent.
 
 ### Next safe unit
 
-Implement a PostgreSQL application adapter contract with pooled connections and explicit transaction-scoped tenant context, test it against the existing PostgreSQL CI service, then switch the Express boundary only after equivalent API behavior is proven.
+Generate and commit a synchronized lockfile for the selected PostgreSQL Node driver in a normal npm-enabled checkout, wire its pool into the verified adapter, and add real PostgreSQL pool integration tests. After that is green, propagate a validated tenant ID into the Express authenticated principal and bind request-driven database operations through `withIdentityTransaction`.
 
 ## 9. Release decision
 
