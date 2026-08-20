@@ -1,56 +1,52 @@
 # Zok Master Execution Plan
 
-**Status:** Active release-control ledger
-**Last updated:** 2026-08-20
-**Canonical branch:** `main`
-**Canonical runtime:** Vite + React frontend with Express API adapter
+**Status:** Active release-control ledger  
+**Last updated:** 2026-08-20  
+**Canonical branch:** `main`  
+**Active implementation branch:** `feat/postgres-storage-foundation` / PR #6  
+**Canonical runtime:** Vite + React frontend with Express API adapter  
 **Release state:** FOUNDATION HARDENED / NOT GOLD MASTER
 
-This file is the canonical execution source for release work. Every implementation cycle must select the highest-priority incomplete item, produce verifiable evidence, and update this file together with `IMPLEMENTATION-CHECKLIST.md` and `CHANGELOG.md`.
+This file is the canonical execution source for release work. Every cycle selects the highest-priority incomplete unit that can be implemented and verified safely, records exact evidence, and synchronizes this file with `IMPLEMENTATION-CHECKLIST.md` and `CHANGELOG.md`.
 
----
+## 1. Release objective
 
-## 1. Release Objective
-
-Deliver Zok as a production-ready conversational-commerce platform without representing UI simulations as completed backend capability. Release claims must be backed by tests, runtime evidence, security controls, operational readiness, and current documentation.
+Deliver Zok as a production-ready conversational-commerce platform without treating UI simulations, mock integrations, demo AI behavior, static metrics, or local-only persistence as production capability.
 
 ### Non-negotiable rules
 
-1. No unchecked implementation item may be reported as complete without evidence.
-2. No mock integration, static metric, demo AI behavior, or UI-only control counts as a production capability.
-3. Every code-changing execution cycle must run the relevant verification gate before marking work complete.
-4. Every completed execution cycle must update:
-   - `CHANGELOG.md`
-   - `exec-planing.md`
-   - `IMPLEMENTATION-CHECKLIST.md`
-5. Any release-impacting architecture or security change must also update the relevant README/deployment/security documentation.
+1. No item is complete without current evidence.
+2. Security/release gates are not weakened to make a change pass.
+3. Code-changing cycles must add or update tests and run relevant gates.
+4. Every completed cycle updates `CHANGELOG.md`, `exec-planing.md`, and `IMPLEMENTATION-CHECKLIST.md` together.
+5. Architecture/security behavior changes also update relevant operational documentation.
+6. Broader phases remain incomplete when only a bounded subset is verified.
 
----
-
-## 2. Current Architecture Baseline
+## 2. Current architecture baseline
 
 ```text
 Browser
   -> Vite/React client
   -> src/lib/api.js
-  -> Express API adapter (loopback)
+  -> Express API adapter
   -> auth/session/origin/CSRF/rate-limit/validation middleware
-  -> serialized atomic JSON storage adapter
+  -> live serialized atomic JSON persistence
+
+CI durable-data verification
+  -> PostgreSQL 17 service
+  -> 001_initial.up.sql
+  -> runtime assertions
+  -> 001_initial.down.sql
+  -> replayed up/down verification
 ```
 
-Current repository evidence already supports a hardened sandbox foundation: authenticated request paths, CSRF/origin protection, security headers, rate limiting, atomic JSON writes, health checks, lint/typecheck/build/test gates, and production dependency audit.
+Evidence now includes a tested JSON storage adapter boundary, an initial tenant-scoped PostgreSQL schema, explicit rollback DDL, and real PostgreSQL migration up/down/replay execution in GitHub Actions. The live Express request path still uses JSON; PostgreSQL is not yet the production runtime store.
 
-The current architecture is not yet horizontally scalable, multi-tenant, provider-integrated, or enterprise-governed. An initial PostgreSQL schema contract now exists in the branch, but it is not wired into the runtime and has not been executed against a real PostgreSQL service in CI.
-
----
-
-## 3. Master Priority Queue
-
-Execution must proceed from P0 to P3 unless a blocking defect requires immediate priority escalation.
+## 3. Master priority queue
 
 ### P0 — Gold-Master blockers
 
-- [ ] Replace local JSON persistence with durable PostgreSQL storage and migrations.
+- [ ] Replace local JSON persistence with durable PostgreSQL runtime storage and migrations.
 - [ ] Introduce tenant-aware identity and deny-by-default RBAC.
 - [ ] Persist append-only audit events for privileged and data-changing actions.
 - [ ] Move sessions and rate-limit state to shared production-capable storage.
@@ -63,7 +59,7 @@ Execution must proceed from P0 to P3 unless a blocking defect requires immediate
 
 ### P1 — Production capability
 
-- [ ] Implement real channel adapters for the channels that are publicly claimed.
+- [ ] Implement real channel adapters for publicly claimed channels.
 - [ ] Implement durable campaigns/broadcast workers.
 - [ ] Implement multi-touch event schema and attribution reconciliation.
 - [ ] Implement migration import with dry-run, idempotency, resumability, and rollback.
@@ -83,51 +79,44 @@ Execution must proceed from P0 to P3 unless a blocking defect requires immediate
 
 ### P3 — Release polish
 
-- [ ] Accessibility audit and remediation.
+- [ ] Accessibility audit/remediation.
 - [ ] Cross-browser/device regression suite.
 - [ ] Final documentation consistency audit.
-- [ ] Release notes and migration notes.
+- [ ] Release/migration notes.
 - [ ] Support/operator training material.
 - [ ] Signed Gold Master evidence record.
 
----
+## 4. Durable-data progress
 
-## 4. Execution Protocol
+Completed evidence-backed subunits:
 
-For each execution cycle:
+- [x] JSON storage adapter contract with serialized atomic writes and corrupt-state fail-closed behavior.
+- [x] Initial PostgreSQL schema for tenants, roles/users, contacts/conversations/messages, campaigns, integrations, consent, sessions, and audit events.
+- [x] Structural schema regression coverage.
+- [x] PostgreSQL migration up/down verification against a real PostgreSQL 17 service.
+- [x] Migration replay after complete rollback.
 
-1. Read `exec-planing.md`, `IMPLEMENTATION-CHECKLIST.md`, and the latest `CHANGELOG.md` entry.
-2. Inspect current code and CI before choosing work.
-3. Select one coherent highest-priority incomplete unit that can be completed and verified safely.
-4. Implement only that bounded unit and its tests/docs.
-5. Run relevant gates.
-6. Record exact evidence and residual risk.
-7. Update all three release-control documents in the same change set.
-8. Do not mark a broader phase complete when only a subset is verified.
+Still incomplete:
 
-### Completion evidence format
+- [ ] Express request path wired to a storage abstraction.
+- [ ] PostgreSQL runtime adapter with connection pooling and explicit transaction boundaries.
+- [ ] Production cutover from JSON to PostgreSQL.
+- [ ] Runtime tenant-isolation enforcement and negative tests.
+- [ ] PostgreSQL concurrent-write/integrity tests.
+- [ ] Backup/restore drill and recorded RPO/RTO.
 
-Every completed checklist item should have enough information to answer:
+## 5. Verification gates
 
-- What changed?
-- Which files/components enforce it?
-- What test or runtime command verifies it?
-- What remains outside the repository or environment?
-
----
-
-## 5. Verification Gates
-
-### Gate A — Dependency and repository integrity
+### Gate A — dependency/repository integrity
 
 ```bash
 npm ci
 npm audit --omit=dev --audit-level=high
 ```
 
-Required: reproducible install; no unresolved production high/critical vulnerability; no committed secrets/runtime DB/build output.
+Required: reproducible install, no unresolved production high/critical vulnerability, no committed secrets/runtime DB/build output.
 
-### Gate B — Static and automated verification
+### Gate B — automated verification
 
 ```bash
 npm test
@@ -135,9 +124,9 @@ npm run lint
 npm run typecheck
 ```
 
-Required: tests pass; no lint errors; typecheck passes; security-sensitive negative cases fail closed.
+Required: tests pass, no lint errors, typecheck passes, security-sensitive negative cases fail closed.
 
-### Gate C — Build and production-shaped smoke
+### Gate C — build/runtime smoke
 
 ```bash
 npm run build
@@ -145,102 +134,57 @@ NODE_ENV=production npm start
 curl -fsS http://127.0.0.1:3005/api/health
 ```
 
-Required: successful build/start/health; API remains loopback-only when deployed behind the edge; HTTPS and secure-cookie behavior verified in the deployment environment.
+Required: successful build/start/health plus deployment-environment HTTPS/secure-cookie verification.
 
-### Gate D — Enterprise release evidence
+### Gate D — enterprise evidence
 
-Required before Gold Master:
+Required before Gold Master: tenant/RBAC security review, provider replay/contract evidence, AI evaluations, penetration test/remediation, load/capacity test against SLOs, backup restore drill, privacy lifecycle evidence, monitored canary/rollback proof, and operational sign-off.
 
-- tenant-isolation and RBAC security review;
-- provider contract/replay tests for each claimed integration;
-- AI evaluation and guardrail evidence;
-- penetration test and remediation record;
-- load/capacity test against agreed SLOs;
-- backup restore drill and documented RPO/RTO;
-- privacy/data lifecycle evidence;
-- monitored canary, rollback proof, and operational sign-off.
+## 6. CI target state
 
----
+Current CI enforces release-document presence, `npm ci`, tests, lint, typecheck, build, production dependency audit, least-privilege permissions, concurrency cancellation, and a health-checked PostgreSQL 17 service for migration execution. Workflow failures remain release blockers until triaged and recorded.
 
-## 6. CI / Workflow Target State
+## 7. Execution order
 
-GitHub Actions should enforce, at minimum:
+Unless a security/CI blocker supersedes it:
 
-- clean dependency installation;
-- test, lint, typecheck, production build;
-- production dependency audit;
-- documentation/release-control presence checks;
-- dependency updates through GitHub-native automation where appropriate;
-- least-privilege permissions and concurrency cancellation;
-- workflow versions pinned to supported major releases.
-
-Workflow failures are release blockers until triaged and recorded.
-
----
-
-## 7. GitHub Documentation and Template Target State
-
-Repository collaboration metadata must remain aligned with the release process:
-
-- PR template requires verification and release-document synchronization.
-- Bug template captures reproducibility, severity, regression, environment, and security impact.
-- Feature template captures problem, scope, acceptance criteria, architecture/security/data impacts, and evidence expectations.
-- Security-sensitive findings must not be pasted into public issue bodies when disclosure should be private.
-- Contributor docs must point to the canonical execution/checklist/release gates.
-
----
-
-## 8. Current Release Decision
-
-The current codebase has a hardened sandbox/developer foundation, but enterprise platform requirements remain incomplete. Gold Master promotion is forbidden until every P0 blocker is completed with current evidence and Gate D is signed off.
-
-**Current verdict:** FOUNDATION HARDENED / NOT GOLD MASTER.
-
----
-
-## 9. Next Execution Order
-
-Unless a failing CI/security defect supersedes it, execute in this order:
-
-1. Durable PostgreSQL data model + migrations + storage abstraction.
-2. Tenant identity/RBAC + audit event foundation.
+1. Finish durable PostgreSQL runtime foundation: tenant-isolation enforcement/tests, storage wiring, PostgreSQL adapter/pool/transactions, production cutover, concurrent integrity, backup/restore.
+2. Tenant identity/RBAC + append-only audit foundation.
 3. Shared session/rate-limit state.
-4. Provider-neutral event contract + queue/retry/idempotency base.
-5. First verified channel adapter.
+4. Provider-neutral events + queue/retry/idempotency base.
+5. First verified channel adapter + consent enforcement.
 6. AI policy/evaluation service.
-7. Privacy lifecycle + migration/attribution/POS capability.
+7. Privacy lifecycle + migration/attribution/POS.
 8. Observability, load/DR/security exercises.
-9. Product-completeness features and Gold Master polish.
+9. Product completeness and Gold Master polish.
 
-At the end of every cycle, synchronize `CHANGELOG.md`, this file, and `IMPLEMENTATION-CHECKLIST.md` before considering the cycle complete.
+Dependabot major-version PRs remain separate from this P0 implementation branch until their compatibility is independently verified.
 
----
+## 8. Current execution evidence — PostgreSQL runtime migration slice
 
-## 10. Active execution cycle — 2026-08-20 PostgreSQL schema slice
-
-**Branch:** `feat/postgres-storage-foundation`
+**Branch:** `feat/postgres-storage-foundation`  
 **PR:** #6 (draft)
-**Selected bounded unit:** define the initial PostgreSQL schema contract required by the P0 durable-data platform without claiming runtime migration execution, PostgreSQL adapter wiring, tenant isolation, or production cutover.
 
-### Evidence
+1. Inspected current plan, open PRs, and CI; reused PR #6.
+2. Added `test/postgres-migration-runtime.test.js` before implementation.
+3. Added PostgreSQL 17 service configuration to `.github/workflows/ci.yml` with a health check and dedicated test database URL.
+4. TDD red: CI `32330868918` reached a healthy PostgreSQL service, confirmed `psql`, and failed only on intentionally absent `scripts/postgres-migrations.js`; pre-existing tests passed.
+5. Added `scripts/postgres-migrations.js` with fail-fast `psql`, `ON_ERROR_STOP=1`, explicit migration paths, and single-transaction execution.
+6. Corrected an initial stdin invocation before completion so migration files are executed deterministically from repository paths.
+7. Green: CI `32330980037` successfully executed initial migration up, verified all expected tables, rolled down, verified teardown, replayed up, rolled down again, then passed all tests, lint, typecheck, production build, and dependency audit.
 
-1. Inspected `main`, all open PRs, PR #6, and CI before selecting work. PR #6 was already the active durable-storage branch and its previous head CI run `32329765447` was green, so this run reused that PR instead of creating another.
-2. Added `test/postgres-schema.test.js` before the migration files. The contract requires tables for tenants, roles, users, user-role membership, contacts, conversations, messages, campaigns, integrations, consent records, sessions, and audit events; tenant ownership foreign keys; scoped uniqueness; constrained message direction/campaign status; and explicit down-migration teardown coverage.
-3. TDD red was confirmed in CI run `32330472344`: the new tests failed with `ENOENT` for the intentionally absent `001_initial.up.sql` and `001_initial.down.sql`, while the existing API hardening and JSON storage tests passed.
-4. Added `server/storage/postgres/migrations/001_initial.up.sql` with UUID primary keys, tenant-scoped foreign keys, scoped uniqueness constraints, domain checks, timestamps, and supporting indexes for the required initial data model.
-5. Added `server/storage/postgres/migrations/001_initial.down.sql` with explicit reverse-order table teardown.
-6. Green verification was confirmed by CI run `32330521144`, which passed release-control document checks, `npm ci`, `npm test`, `npm run lint`, `npm run typecheck`, `npm run build`, and `npm audit --omit=dev --audit-level=high`.
+### Status after this slice
 
-### Status recorded this cycle
+- `Migration up/down verification added` is complete and checked in `IMPLEMENTATION-CHECKLIST.md`.
+- The parent P0 durable PostgreSQL item remains incomplete because the live Express runtime still uses JSON.
+- No claim is made for production PostgreSQL cutover, runtime tenant isolation, connection pooling, backup/restore, or horizontal scaling.
 
-- PostgreSQL schema definition is complete at the repository-contract level and is marked complete in `IMPLEMENTATION-CHECKLIST.md`.
-- The parent P0 item "Replace local JSON persistence with durable PostgreSQL storage and migrations" remains unchecked.
-- `Migration up/down verification added` remains unchecked because the SQL has not been executed and rolled back against a real PostgreSQL server in CI.
+### Next safe unit
 
-### Residual risk / incomplete scope
+Add runtime tenant-isolation enforcement/negative tests on PostgreSQL, then continue toward wiring the Express storage boundary and a production PostgreSQL adapter without changing current API behavior until equivalent coverage is green.
 
-- `server.js` still owns and uses the live JSON persistence path; the storage adapter is not wired into the Express request path.
-- The PostgreSQL migration pair has structural regression coverage only; no real PostgreSQL service has executed the up/down migration in this repository's CI evidence.
-- No PostgreSQL runtime adapter, transaction implementation, connection pooling, tenant-isolation runtime tests, backup/restore evidence, or production cutover exists yet.
-- Dependabot major-version PRs remain separate and were not merged or mixed into this P0 storage work.
-- The next safe durable-data unit is runtime migration up/down verification against PostgreSQL if CI infrastructure can support it; otherwise wire `server.js` to the existing storage abstraction without changing API behavior.
+## 9. Release decision
+
+**Current verdict: FOUNDATION HARDENED / NOT GOLD MASTER.**
+
+Gold Master promotion is forbidden until every P0 blocker has current evidence and Gate D is signed off.
