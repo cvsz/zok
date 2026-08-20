@@ -10,7 +10,10 @@ import {
   rollbackTenantIsolationMigration,
 } from '../scripts/postgres-migrations.js';
 import { createPostgresPool, createPostgresStorage } from '../server/storage/postgres-storage.js';
-import { importLegacyChats } from '../server/storage/postgres/legacy-chat-import.js';
+import {
+  createLegacyChatImportCheckpoint,
+  importLegacyChats,
+} from '../server/storage/postgres/legacy-chat-import.js';
 
 const databaseUrl = process.env.ZOK_POSTGRES_TEST_URL;
 const tenantId = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb';
@@ -33,6 +36,26 @@ function sampleChats() {
       orders: [{ id: 'order-7' }],
     },
   }];
+}
+
+function resumableChats() {
+  return [8, 9].map(id => ({
+    id,
+    name: `Resume Customer ${id}`,
+    channel: 'line',
+    avatar: `/avatar-${id}.png`,
+    messages: [
+      { sender: 'customer', text: `Hello ${id}`, time: '10:00' },
+      { sender: 'agent', text: `Welcome ${id}`, time: '10:01' },
+    ],
+    details: {
+      email: `resume-${id}@example.test`,
+      phone: `+66 800 000 0${id}`,
+      assigned: 'Admin',
+      tags: ['resume'],
+      orders: [],
+    },
+  }));
 }
 
 test('legacy chat import dry-run validates and counts without acquiring PostgreSQL storage', async () => {
@@ -67,7 +90,19 @@ test('legacy chat import dry-run validates and counts without acquiring PostgreS
   );
 });
 
-test('legacy chat import is replay-idempotent and fails closed on conflicting replay', {
+test('legacy chat import checkpoint is deterministic and source-bound', () => {
+  const first = createLegacyChatImportCheckpoint({ chats: resumableChats(), tenantId, nextIndex: 1 });
+  const second = createLegacyChatImportCheckpoint({ chats: resumableChats(), tenantId, nextIndex: 1 });
+
+  assert.deepEqual(first, second);
+  assert.deepEqual(Object.keys(first), ['version', 'tenantId', 'sourceDigest', 'nextIndex', 'totalChats']);
+  assert.equal(first.version, 1);
+  assert.equal(first.nextIndex, 1);
+  assert.equal(first.totalChats, 2);
+  assert.match(first.sourceDigest, /^[0-9a-f]{64}$/);
+});
+
+test('legacy chat import is replay-idempotent, resumable after interruption, and fails closed on conflicts', {
   skip: databaseUrl ? false : 'ZOK_POSTGRES_TEST_URL is not configured',
 }, async () => {
   const appPassword = 'zok-import-test-password';
@@ -140,6 +175,69 @@ test('legacy chat import is replay-idempotent and fails closed on conflicting re
         const result = await tx.query('SELECT count(*)::int AS count FROM messages');
         assert.equal(result.rows[0].count, 2);
       });
+
+      let checkpoint;
+      await assert.rejects(
+        () => importLegacyChats({
+          chats: resumableChats(),
+          tenantId,
+          storage,
+          onCheckpoint(nextCheckpoint) {
+            checkpoint = nextCheckpoint;
+            if (nextCheckpoint.nextIndex === 1) throw new Error('simulated import interruption');
+          },
+        }),
+        /simulated import interruption/,
+      );
+
+      assert.equal(checkpoint.nextIndex, 1);
+      assert.equal(checkpoint.totalChats, 2);
+
+      await storage.withTenantTransaction(tenantId, async tx => {
+        const counts = await tx.query(`
+          SELECT
+            (SELECT count(*)::int FROM contacts) AS contacts,
+            (SELECT count(*)::int FROM conversations) AS conversations,
+            (SELECT count(*)::int FROM messages) AS messages
+        `);
+        assert.deepEqual(counts.rows[0], { contacts: 2, conversations: 2, messages: 4 });
+      });
+
+      const resumed = await importLegacyChats({
+        chats: resumableChats(),
+        tenantId,
+        storage,
+        checkpoint,
+        onCheckpoint(nextCheckpoint) {
+          checkpoint = nextCheckpoint;
+        },
+      });
+      assert.equal(resumed.contactsCreated, 1);
+      assert.equal(resumed.conversationsCreated, 1);
+      assert.equal(resumed.messagesCreated, 2);
+      assert.equal(checkpoint.nextIndex, 2);
+
+      await storage.withTenantTransaction(tenantId, async tx => {
+        const counts = await tx.query(`
+          SELECT
+            (SELECT count(*)::int FROM contacts) AS contacts,
+            (SELECT count(*)::int FROM conversations) AS conversations,
+            (SELECT count(*)::int FROM messages) AS messages
+        `);
+        assert.deepEqual(counts.rows[0], { contacts: 3, conversations: 3, messages: 6 });
+      });
+
+      const changedResumeSource = resumableChats();
+      changedResumeSource[1].messages[0].text = 'Changed after checkpoint';
+      await assert.rejects(
+        () => importLegacyChats({
+          chats: changedResumeSource,
+          tenantId,
+          storage,
+          checkpoint: createLegacyChatImportCheckpoint({ chats: resumableChats(), tenantId, nextIndex: 1 }),
+        }),
+        /checkpoint source does not match/,
+      );
     } finally {
       await storage.close();
     }
