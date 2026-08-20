@@ -28,8 +28,8 @@ This checklist is the operational companion to `exec-planing.md`. Items are chec
 - [x] Deterministic legacy `/api/chats` compatibility mapper. Evidence: `26906f28c34d74077c3e496d0ddbf1ab21a080fb`, `777af487395161b74fc1be472d1f5ddd448c73fb`, repair `42c1c4995de3f3a22d743f53dd6a630747a32884`, CI `32351874076`.
 - [x] Request-bound legacy chat PostgreSQL runtime. Evidence: `d2440a7d9c6d94fb510a24c92dc68c8dd91bd8af`, `e95d2751804bed7c7a3b9ff055b5108829de8a54`, `81abadeb91261ebeb232ca71d3fed88069f40223`, CI `32357209712`, synchronized-head CI `32357391343`.
 - [x] Configuration-gated Express chat message read/write path; JSON remains default/rollback mode. Evidence: `6eb110c4008b8fd8646fbd07a9c37d981e639da1`, `7ca81445a222ba901413d95df8b5074a496b94f0`, `542bf524de74d4d87fdee978a38bf61e30fa298f`, CI `32362476402`, synchronized-head CI `32362766907`; PR #16 merged as `dc677799cbac6ee793a612330313b1c39f5cc7ca`.
-- [x] Deterministic legacy chat JSON→PostgreSQL import dry-run and ordinary replay/idempotency foundation on draft PR #17. Evidence: importer `a94042d1fc5dc2b013261167c26c96c5d433fac2`, CLI `24b10ae585bcd52bc87c0ff7cc20922e00d7ae0f`, structural replay comparison `becd258ef396e43732816fdc6d0ae5055c5fe6d8`, tests `abc559a7593d657a373cd645eea90295268f4ca0`, implementation-head CI `32367095289`.
-- [ ] Chat import resumability/checkpointing verified under interruption/restart.
+- [x] Deterministic legacy chat JSON→PostgreSQL import dry-run and ordinary replay/idempotency foundation on draft PR #17. Evidence: importer `a94042d1fc5dc2b013261167c26c96c5d433fac2`, CLI `24b10ae585bcd52bc87c0ff7cc20922e00d7ae0f`, structural replay comparison `becd258ef396e43732816fdc6d0ae5055c5fe6d8`, tests `abc559a7593d657a373cd645eea90295268f4ca0`, implementation-head CI `32367095289`, synchronized-head CI `32367337923`.
+- [x] Chat import resumability/checkpointing verified under interruption/restart. Evidence: importer checkpoints `4ec62fd68bf7a786edc585918a12c23e6f6422f4`, atomic checkpoint CLI `a3790630253fb095f11c27613d3796f5682d556c`, interruption/restart/source-binding tests `7616dfc8eb23cd7fc3bf0b2ea7e2e71fc928cfed`, implementation-head CI `32372290510`.
 - [ ] Chat production cutover and explicit rollback verified.
 - [ ] Chat metadata/unread/tags migrated from JSON.
 - [ ] Campaigns, integrations, AI config, and flow state migrated to PostgreSQL.
@@ -107,23 +107,24 @@ This checklist is the operational companion to `exec-planing.md`. Items are chec
 - [ ] Support/operator training material prepared.
 - [ ] Gold Master evidence record signed.
 
-## Current execution cycle — deterministic legacy chat import
+## Current execution cycle — deterministic and resumable legacy chat import
 
-- [x] Repository/PR state refreshed first: `main` at `29f0055d439fda5cf5ac8bab5d8755b371be1817`; PR #16 already merged; remaining open PRs are separately scoped Dependabot updates.
-- [x] Created `feat/postgres-chat-import` and draft PR #17 from current `main`; did not merge.
+- [x] Repository/PR state refreshed first: `main` at `29f0055d439fda5cf5ac8bab5d8755b371be1817`; PR #17 reused; separately scoped Dependabot updates remain outside this P0 unit.
 - [x] Import validates every source chat through the existing legacy compatibility mapper before writes.
 - [x] Duplicate source stable thread/message IDs fail before database writes.
 - [x] Dry-run validates/counts without acquiring PostgreSQL storage.
-- [x] Real import executes under existing tenant transaction/RLS boundary.
 - [x] Exact replay reuses matching contact/thread/message rows and creates no duplicates in service-backed regression coverage.
 - [x] Conflicting or ambiguous replay fails closed rather than silently mutating divergent state.
-- [x] Standalone CLI reads a JSON object containing `chats`; write mode requires `ZOK_POSTGRES_URL`; tenant comes from `ZOK_ADMIN_TENANT_ID` or `--tenant-id`.
-- [x] Implementation-head CI `32367095289` passed release-document checks, PostgreSQL service/client verification, `npm ci`, tests, lint, typecheck, production build, and production dependency audit.
-- [x] Residual scope is explicit: no resumability/checkpointing, production cutover, rollback proof, metadata/unread/tag migration, full resource cutover, or backup/restore evidence.
+- [x] Deterministic checkpoint binds version, tenant UUID, normalized-source SHA-256 digest, next chat index, and total chat count.
+- [x] Write execution commits one chat per existing tenant transaction/RLS boundary and emits checkpoint progress only after commit.
+- [x] CLI persists checkpoint records atomically with `--checkpoint <file>` and resumes only with explicit `--resume`; stale/missing/mismatched checkpoint state fails closed.
+- [x] PostgreSQL service-backed interruption test injects failure after the first committed chat, verifies only durable progress exists, resumes from that checkpoint, and verifies no duplicate replay of the completed chat.
+- [x] Resumability implementation-head CI `32372290510` passed release-document checks, PostgreSQL service/client verification, `npm ci`, tests, lint, typecheck, production build, and production dependency audit.
+- [x] Residual scope is explicit: concurrent importer serialization, production cutover, rollback proof, metadata/unread/tag migration, full resource cutover, and backup/restore evidence remain incomplete.
 
 ## Next bounded unit
 
-- [ ] Add resumable/checkpointed chat import with deterministic progress state and interruption/restart tests. Keep `ZOK_CHAT_STORAGE=json` as default and explicit rollback mode until cutover/rollback evidence is green.
+- [ ] Add explicit chat cutover + rollback verification around the configuration-gated chat path using imported state. Keep `ZOK_CHAT_STORAGE=json` as the default/rollback mode and do not widen the PostgreSQL surface until cutover/rollback regression evidence is green.
 
 ## Gold Master rule
 
