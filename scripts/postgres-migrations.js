@@ -39,6 +39,29 @@ export async function rollbackInitialMigration(databaseUrl) {
   await executeMigrationFile(databaseUrl, '001_initial.down.sql');
 }
 
+export async function applyTenantIsolationMigration(databaseUrl) {
+  await executeMigrationFile(databaseUrl, '002_tenant_rls.up.sql');
+}
+
+export async function rollbackTenantIsolationMigration(databaseUrl) {
+  await executeMigrationFile(databaseUrl, '002_tenant_rls.down.sql');
+}
+
+export async function executeSql(databaseUrl, sql) {
+  await runPsql(databaseUrl, ['--quiet', '--command', sql]);
+}
+
+export async function queryScalar(databaseUrl, sql) {
+  const stdout = await runPsql(databaseUrl, [
+    '--quiet',
+    '--tuples-only',
+    '--no-align',
+    '--command',
+    sql,
+  ]);
+  return stdout.trim();
+}
+
 export async function listPublicTables(databaseUrl) {
   const stdout = await runPsql(databaseUrl, [
     '--tuples-only',
