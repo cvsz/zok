@@ -1,103 +1,215 @@
-# Execution Plan: Zaapi Platform Copy-Clone
+# Zok Master Execution Plan
 
-This document outlines the architecture, layout, design specs, and development roadmap for building a fully interactive, premium clone of the **Zaapi** conversational AI and chat-commerce platform.
+**Status:** Active release-control ledger
+**Last updated:** 2026-08-20
+**Canonical branch:** `main`
+**Canonical runtime:** Vite + React frontend with Express API adapter
+**Release state:** FOUNDATION HARDENED / NOT GOLD MASTER
 
----
-
-## 1. Project Overview & Objectives
-Zaapi is an all-in-one conversational AI platform that consolidates client interactions across Southeast Asia's major chat and e-commerce channels (WhatsApp, Facebook, Instagram, LINE OA, TikTok Shop, Shopee, Lazada, email, and live chat) into a single unified workspace.
-
-**Our Goal:** Build a stunning, high-fidelity web application containing:
-1. **Premium Landing Page:** Built with high-end glassmorphism, responsive grids, custom brand styling (using the signature `#00c28e` emerald theme), interactive features slider, and smooth micro-animations.
-2. **Zaapi App Dashboard Clone:** An interactive, rich mockup representing the actual platform, allowing the user to experience all key features:
-   * **Unified Inbox:** Rich chat panel filtering messages by channel, sending mock messages, smart tag segmentation, agent assignment, and customer CRM sidebar (Shopify order sync).
-   * **AI Sales Agent Studio:** Sandbox to customize business context, define agent persona, edit QA pairs, and test the AI bot dynamically.
-   * **Visual Flow Builder:** Sleek canvas representing the chatbot flow automation builder, with draggable and configurable nodes (Triggers, Sends, Conditions).
-   * **Broadcasts Panel:** Target segments using custom customer tags, select bulk templates (WhatsApp/LINE), and track delivery statistics.
-   * **Analytics Dashboard:** Graphical charts representing KPIs like Response Times, Resolution Rates, Platform Distribution, and Sales Revenue.
-   * **Integrations Portal:** Setup panel for Shopify, Lazada, Shopee, TikTok Shop, HubSpot, and Webhooks.
+This file is the canonical execution source for release work. Every implementation cycle must select the highest-priority incomplete item, produce verifiable evidence, and update this file together with `IMPLEMENTATION-CHECKLIST.md` and `CHANGELOG.md`.
 
 ---
 
-## 2. Technology Stack & Design System
-We will implement this project as a **Vite + React** single-page application (SPA) with a custom design system using vanilla CSS variables to ensure high performance, responsiveness, and maximum design control.
+## 1. Release Objective
 
-### CSS Theme Tokens (`/src/index.css`)
-* **Primary Color:** `#00c28e` (Zaapi Green)
-* **Dark Background:** `#0B132B` (App dark mode UI background)
-* **Light/Glass Surface:** `rgba(255, 255, 255, 0.05)` (App glassmorphism backdrop)
-* **Borders:** `rgba(255, 255, 255, 0.1)` / `#E5E7EB`
-* **Typography:** `Inter`, `Outfit`, Sans-serif
-* **Gradient Elements:** Warm radial mesh gradients matching Zaapi's brand styles.
+Deliver Zok as a production-ready conversational-commerce platform without representing UI simulations as completed backend capability. Release claims must be backed by tests, runtime evidence, security controls, operational readiness, and current documentation.
+
+### Non-negotiable rules
+
+1. No unchecked implementation item may be reported as complete without evidence.
+2. No mock integration, static metric, demo AI behavior, or UI-only control counts as a production capability.
+3. Every code-changing execution cycle must run the relevant verification gate before marking work complete.
+4. Every completed execution cycle must update:
+   - `CHANGELOG.md`
+   - `exec-planing.md`
+   - `IMPLEMENTATION-CHECKLIST.md`
+5. Any release-impacting architecture or security change must also update the relevant README/deployment/security documentation.
 
 ---
 
-## 3. Implementation Directory Structure
-```
-/mnt/zok/
-├── exec-planing.md           # This execution plan
-├── package.json              # Project dependencies
-├── vite.config.js            # Build config
-├── index.html                # Entry document
-├── src/
-│   ├── main.jsx              # App entrypoint
-│   ├── index.css             # Main styling, utility classes & animations
-│   ├── App.jsx               # App routing / View management
-│   ├── components/           # Reusable components
-│   │   ├── Navbar.jsx        # Landing page responsive nav
-│   │   ├── Footer.jsx        # Branding and links
-│   │   ├── ThemeToggle.jsx   # Custom theme control
-│   │   └── ui/               # Basic design-system components
-│   └── views/                # Platform main views
-│       ├── LandingPage.jsx   # High-conversion product showcase
-│       └── Dashboard/        # Zaapi App Clone Container
-│           ├── DashboardNav.jsx
-│           ├── UnifiedInbox.jsx
-│           ├── AIAgent.jsx
-│           ├── FlowBuilder.jsx
-│           ├── Broadcasts.jsx
-│           ├── Analytics.jsx
-│           └── Integrations.jsx
+## 2. Current Architecture Baseline
+
+```text
+Browser
+  -> Vite/React client
+  -> src/lib/api.js
+  -> Express API adapter (loopback)
+  -> auth/session/origin/CSRF/rate-limit/validation middleware
+  -> serialized atomic JSON storage adapter
 ```
 
----
+Current repository evidence already supports a hardened sandbox foundation: authenticated request paths, CSRF/origin protection, security headers, rate limiting, atomic JSON writes, health checks, lint/typecheck/build/test gates, and production dependency audit.
 
-## 4. Feature Specifications & Roadmap
-
-### Phase 1: Foundation & Setup
-1. Setup React app with Vite.
-2. Initialize global styles (`index.css`) containing color variables, typography, reset layout, and custom grid utility classes.
-3. Configure layout templates.
-
-### Phase 2: Landing Page Development
-1. **Hero Section:** Engaging headline, animated grid background, mock platform floating layers.
-2. **Channel Marquee:** Multi-row continuous animation listing channel icons (WhatsApp, Instagram, etc.).
-3. **Interactive Features Slider:** Clickable tabs detailing Unified Inbox, AI Agent, Flow Builder, and Broadcasts with visual dynamic screenshots/simulators.
-4. **Platform Comparison Grid:** Interactive comparison matrices detailing Zaapi features vs HubSpot, Zendesk, and standard LINE/WhatsApp.
-5. **Interactive Pricing Plans:** Tiered pricing tables (Basic, Pro, Advanced) with monthly and annual billing period sliders.
-6. **Data Privacy & Trust Section:** Highlight safety and customer ownership.
-
-### Phase 3: The Unified Inbox View
-1. **Left Sidebar:** User selection & Channel Filter buttons.
-2. **Chat List:** List of customers (e.g. Panacee Medical, Karmart client names) with last message, unread badges, and channel indicators.
-3. **Chat Window:** Active window allowing messaging. An automated response simulation will reply to user inputs.
-4. **CRM Right Panel:** Client details, active tags (e.g., "VIP", "Needs-Follow-up"), assignee manager dropdown, and Shopify order history list.
-
-### Phase 4: AI Agent Studio & Flow Builder
-1. **AI Agent Setup:** Form inputs for Knowledge Base text, Assistant Name, Persona Select.
-2. **AI Simulator widget:** Interactive chat preview where users can talk to the custom bot.
-3. **Flow Builder Canvas:** Visual representation of conversation flow charts. Interactive mock where users can add nodes (Action, Condition, Trigger), connect them with lines, and inspect node options.
-
-### Phase 5: Broadcasts, Analytics & Integrations
-1. **Broadcast Creator:** Audience target setup, template writer (variables support like `{{customer_name}}`), and scheduler.
-2. **Campaign Reports:** Progress bars showing open and conversion rates.
-3. **Analytics Dashboard:** Visual widgets showing key performance indicator (KPI) graphs.
-4. **Integration Switches:** Interlock buttons to simulate connecting Shopify, TikTok, Shopee with status logs.
+The current architecture is not yet horizontally scalable, multi-tenant, provider-integrated, or enterprise-governed.
 
 ---
 
-## 5. Verification & Review Plan
-* Test responsiveness across all devices (Desktop, Tablet, Mobile).
-* Ensure smooth screen transitions and instant micro-interactions.
-* Verify clean console logs and optimized asset load speeds.
-* Execute builds to verify standard bundle outputs are lint-free.
+## 3. Master Priority Queue
+
+Execution must proceed from P0 to P3 unless a blocking defect requires immediate priority escalation.
+
+### P0 — Gold-Master blockers
+
+- [ ] Replace local JSON persistence with durable PostgreSQL storage and migrations.
+- [ ] Introduce tenant-aware identity and deny-by-default RBAC.
+- [ ] Persist append-only audit events for privileged and data-changing actions.
+- [ ] Move sessions and rate-limit state to shared production-capable storage.
+- [ ] Define provider-neutral channel event contracts.
+- [ ] Implement webhook signature verification, idempotency, retries, dead-letter handling, and delivery receipts.
+- [ ] Implement consent/opt-out enforcement for outbound communication.
+- [ ] Move AI policy decisions server-side with prompt/model versioning, risk controls, approval flows, cost/latency records, and evaluation suites.
+- [ ] Complete production edge verification for HTTPS, reverse proxy, secure cookies, health, and rollback.
+- [ ] Complete independent security review, load test, backup/restore drill, privacy review, and release sign-off.
+
+### P1 — Production capability
+
+- [ ] Implement real channel adapters for the channels that are publicly claimed.
+- [ ] Implement durable campaigns/broadcast workers.
+- [ ] Implement multi-touch event schema and attribution reconciliation.
+- [ ] Implement migration import with dry-run, idempotency, resumability, and rollback.
+- [ ] Implement POS/e-commerce provider adapters with replay-safe contracts.
+- [ ] Add metrics, traces, structured logs, SLOs, alerts, and incident runbooks.
+- [ ] Add tenant-scoped API keys, rotation, revocation, and secrets handling.
+- [ ] Add export/delete/retention workflows for privacy obligations.
+
+### P2 — Product completeness
+
+- [ ] Persist onboarding/setup wizard state.
+- [ ] Implement Academy enrollment/completion/certificate verification.
+- [ ] Implement marketplace ownership, publishing, moderation, and versioning.
+- [ ] Add production-backed analytics and operational reporting.
+- [ ] Replace remaining UI-only simulations with explicit sandbox labeling or real services.
+- [ ] Split oversized frontend bundles and enforce performance budgets.
+
+### P3 — Release polish
+
+- [ ] Accessibility audit and remediation.
+- [ ] Cross-browser/device regression suite.
+- [ ] Final documentation consistency audit.
+- [ ] Release notes and migration notes.
+- [ ] Support/operator training material.
+- [ ] Signed Gold Master evidence record.
+
+---
+
+## 4. Execution Protocol
+
+For each execution cycle:
+
+1. Read `exec-planing.md`, `IMPLEMENTATION-CHECKLIST.md`, and the latest `CHANGELOG.md` entry.
+2. Inspect current code and CI before choosing work.
+3. Select one coherent highest-priority incomplete unit that can be completed and verified safely.
+4. Implement only that bounded unit and its tests/docs.
+5. Run relevant gates.
+6. Record exact evidence and residual risk.
+7. Update all three release-control documents in the same change set.
+8. Do not mark a broader phase complete when only a subset is verified.
+
+### Completion evidence format
+
+Every completed checklist item should have enough information to answer:
+
+- What changed?
+- Which files/components enforce it?
+- What test or runtime command verifies it?
+- What remains outside the repository or environment?
+
+---
+
+## 5. Verification Gates
+
+### Gate A — Dependency and repository integrity
+
+```bash
+npm ci
+npm audit --omit=dev --audit-level=high
+```
+
+Required: reproducible install; no unresolved production high/critical vulnerability; no committed secrets/runtime DB/build output.
+
+### Gate B — Static and automated verification
+
+```bash
+npm test
+npm run lint
+npm run typecheck
+```
+
+Required: tests pass; no lint errors; typecheck passes; security-sensitive negative cases fail closed.
+
+### Gate C — Build and production-shaped smoke
+
+```bash
+npm run build
+NODE_ENV=production npm start
+curl -fsS http://127.0.0.1:3005/api/health
+```
+
+Required: successful build/start/health; API remains loopback-only when deployed behind the edge; HTTPS and secure-cookie behavior verified in the deployment environment.
+
+### Gate D — Enterprise release evidence
+
+Required before Gold Master:
+
+- tenant-isolation and RBAC security review;
+- provider contract/replay tests for each claimed integration;
+- AI evaluation and guardrail evidence;
+- penetration test and remediation record;
+- load/capacity test against agreed SLOs;
+- backup restore drill and documented RPO/RTO;
+- privacy/data lifecycle evidence;
+- monitored canary, rollback proof, and operational sign-off.
+
+---
+
+## 6. CI / Workflow Target State
+
+GitHub Actions should enforce, at minimum:
+
+- clean dependency installation;
+- test, lint, typecheck, production build;
+- production dependency audit;
+- documentation/release-control presence checks;
+- dependency updates through GitHub-native automation where appropriate;
+- least-privilege permissions and concurrency cancellation;
+- workflow versions pinned to supported major releases.
+
+Workflow failures are release blockers until triaged and recorded.
+
+---
+
+## 7. GitHub Documentation and Template Target State
+
+Repository collaboration metadata must remain aligned with the release process:
+
+- PR template requires verification and release-document synchronization.
+- Bug template captures reproducibility, severity, regression, environment, and security impact.
+- Feature template captures problem, scope, acceptance criteria, architecture/security/data impacts, and evidence expectations.
+- Security-sensitive findings must not be pasted into public issue bodies when disclosure should be private.
+- Contributor docs must point to the canonical execution/checklist/release gates.
+
+---
+
+## 8. Current Release Decision
+
+The current codebase has a hardened sandbox/developer foundation, but enterprise platform requirements remain incomplete. Gold Master promotion is forbidden until every P0 blocker is completed with current evidence and Gate D is signed off.
+
+**Current verdict:** FOUNDATION HARDENED / NOT GOLD MASTER.
+
+---
+
+## 9. Next Execution Order
+
+Unless a failing CI/security defect supersedes it, execute in this order:
+
+1. Durable PostgreSQL data model + migrations + storage abstraction.
+2. Tenant identity/RBAC + audit event foundation.
+3. Shared session/rate-limit state.
+4. Provider-neutral event contract + queue/retry/idempotency base.
+5. First verified channel adapter.
+6. AI policy/evaluation service.
+7. Privacy lifecycle + migration/attribution/POS capability.
+8. Observability, load/DR/security exercises.
+9. Product-completeness features and Gold Master polish.
+
+At the end of every cycle, synchronize `CHANGELOG.md`, this file, and `IMPLEMENTATION-CHECKLIST.md` before considering the cycle complete.
