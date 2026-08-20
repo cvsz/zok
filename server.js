@@ -760,6 +760,15 @@ app.post('/api/chats/:id/read', async (req, res) => {
   const chatId = parseChatId(req.params.id);
   if (chatId === null) return res.status(400).json({ error: 'Chat id must be a positive integer' });
 
+  if (chatRouteGate.mode === 'postgres') {
+    const db = await readDB();
+    const metadataChat = db.chats.find(chat => chat.id === chatId);
+    if (!metadataChat) return res.status(404).json({ error: 'Chat not found' });
+    const metadata = await chatRouteGate.runtime.markRead(req, chatId);
+    if (!metadata) return res.status(404).json({ error: 'Chat not found' });
+    return res.json(await postgresBackedChat(req, metadataChat));
+  }
+
   const updatedChat = await updateDB(db => {
     const chatIndex = db.chats.findIndex(c => c.id === chatId);
     if (chatIndex === -1) return null;
@@ -778,6 +787,15 @@ app.post('/api/chats/:id/tags', async (req, res) => {
 
   const tagError = validateTags(tags);
   if (tagError) return res.status(400).json({ error: tagError });
+
+  if (chatRouteGate.mode === 'postgres') {
+    const db = await readDB();
+    const metadataChat = db.chats.find(chat => chat.id === chatId);
+    if (!metadataChat) return res.status(404).json({ error: 'Chat not found' });
+    const metadata = await chatRouteGate.runtime.replaceTags(req, chatId, tags);
+    if (!metadata) return res.status(404).json({ error: 'Chat not found' });
+    return res.json(await postgresBackedChat(req, metadataChat));
+  }
 
   const updatedChat = await updateDB(db => {
     const chatIndex = db.chats.findIndex(c => c.id === chatId);
