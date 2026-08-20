@@ -22,12 +22,12 @@ This checklist is the operational companion to `exec-planing.md`. Items may be c
 ## P0 — Gold Master blockers
 
 ### Durable data platform
-- [ ] PostgreSQL schema defined for tenants, users, roles, contacts, conversations, messages, campaigns, integrations, consent, sessions, and audit events.
-- [ ] Migration up/down verification added.
+- [x] PostgreSQL schema defined for tenants, users, roles, contacts, conversations, messages, campaigns, integrations, consent, sessions, and audit events. Evidence: `server/storage/postgres/migrations/001_initial.up.sql` plus `test/postgres-schema.test.js`; CI run `32330521144` passed.
+- [ ] Migration up/down verification added. Current down DDL is structurally covered, but no real PostgreSQL migration execution/rollback has been run in CI yet.
 - [ ] Storage abstraction introduced so JSON persistence is no longer production canonical.
 - [x] First storage-boundary slice added: tested JSON adapter contract in `server/storage/json-storage.js` with initialization, serialized concurrent updates, atomic write cleanup, and corrupt-state fail-closed coverage in `test/storage.test.js`.
 - [ ] Wire the Express request path to the storage adapter without behavior regressions.
-- [ ] Introduce PostgreSQL adapter/schema/migrations and switch production persistence away from JSON.
+- [ ] Introduce PostgreSQL adapter/runtime migration execution and switch production persistence away from JSON.
 - [ ] Tenant-isolation tests added.
 - [ ] Concurrent write/integrity tests added for durable storage.
 - [ ] Backup and restore procedure verified.
@@ -109,14 +109,17 @@ This checklist is the operational companion to `exec-planing.md`. Items may be c
 - [ ] Support/operator training material prepared.
 - [ ] Gold Master evidence record signed.
 
-## Current execution cycle — 2026-08-20 storage foundation slice
+## Current execution cycle — 2026-08-20 PostgreSQL schema slice
 
-- [x] Read `exec-planing.md` before selecting work.
-- [x] Selected the highest-priority bounded incomplete item: durable-storage abstraction foundation.
-- [x] Added the failing storage contract test before production code; first CI run failed with `ERR_MODULE_NOT_FOUND` for the intentionally absent adapter.
-- [x] Added the minimal JSON storage adapter implementation after confirming the red test.
-- [x] Final CI verification recorded: run `32329717269` passed release documents, `npm ci`, tests, lint, typecheck, build, and production dependency audit.
-- [x] Residual risk recorded: `server.js` still owns the live JSON persistence path and PostgreSQL is not implemented.
+- [x] Inspected `main`, open PRs, PR #6, and the current CI state before selecting work.
+- [x] Reused existing draft PR #6; no additional PR was created.
+- [x] Selected the next safe bounded P0 durable-data unit: define the initial PostgreSQL schema contract without claiming runtime migration/cutover.
+- [x] Added `test/postgres-schema.test.js` before the migration files.
+- [x] TDD red confirmed: CI run `32330472344` failed on missing `001_initial.up.sql` / `001_initial.down.sql`, while existing API hardening and JSON storage tests passed.
+- [x] Added `001_initial.up.sql` defining tenant-scoped tables, foreign keys, scoped uniqueness, field constraints, and indexes for the required data model.
+- [x] Added `001_initial.down.sql` with explicit reverse teardown coverage.
+- [x] Green verification recorded: CI run `32330521144` passed release-control checks, `npm ci`, tests, lint, typecheck, build, and production dependency audit.
+- [x] Residual risk recorded: `server.js` still uses live JSON persistence; PostgreSQL migrations have not been executed against a real server; no PostgreSQL adapter/cutover or tenant-isolation runtime tests exist yet.
 - [x] `CHANGELOG.md` updated.
 - [x] `exec-planing.md` updated for current cycle evidence/status.
 - [x] `IMPLEMENTATION-CHECKLIST.md` updated.
