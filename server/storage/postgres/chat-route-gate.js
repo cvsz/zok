@@ -38,18 +38,22 @@ function formatMessageTime(message) {
   return timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function requiredMetadata(state) {
+function overlayMetadata(chat, state) {
   const metadata = state?.metadata;
-  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
-    throw new TypeError('PostgreSQL chat metadata is required');
-  }
-  if (!Number.isSafeInteger(metadata.unread) || metadata.unread < 0) {
-    throw new TypeError('PostgreSQL chat unread state is required');
-  }
-  if (!Array.isArray(metadata.tags)) {
-    throw new TypeError('PostgreSQL chat tags are required');
-  }
-  return metadata;
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return chat;
+
+  return {
+    ...chat,
+    avatar: metadata.avatar ?? chat.avatar,
+    unread: Number.isSafeInteger(metadata.unread) && metadata.unread >= 0 ? metadata.unread : chat.unread,
+    time: metadata.displayTime ?? chat.time,
+    details: {
+      ...chat.details,
+      assigned: metadata.assigned ?? chat.details?.assigned,
+      tags: Array.isArray(metadata.tags) ? [...metadata.tags] : (chat.details?.tags || []),
+      orders: Array.isArray(metadata.orders) ? metadata.orders : (chat.details?.orders || []),
+    },
+  };
 }
 
 export function overlayPostgresMessages(chat, state) {
@@ -59,19 +63,10 @@ export function overlayPostgresMessages(chat, state) {
   if (!state || !state.conversation || !Array.isArray(state.messages)) {
     throw new TypeError('PostgreSQL chat state is required');
   }
-  const metadata = requiredMetadata(state);
+  const metadataBackedChat = overlayMetadata(chat, state);
 
   return {
-    ...chat,
-    avatar: metadata.avatar ?? chat.avatar,
-    unread: metadata.unread,
-    time: metadata.displayTime ?? chat.time,
-    details: {
-      ...chat.details,
-      assigned: metadata.assigned ?? chat.details?.assigned,
-      tags: [...metadata.tags],
-      orders: Array.isArray(metadata.orders) ? metadata.orders : (chat.details?.orders || []),
-    },
+    ...metadataBackedChat,
     messages: state.messages.map(message => ({
       sender: message.senderType === 'ai' ? 'bot' : message.senderType,
       text: message.body,
