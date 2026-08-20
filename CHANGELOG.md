@@ -17,6 +17,9 @@ The format follows Keep a Changelog principles and uses calendar dates while the
 - Non-superuser/NOBYPASSRLS negative tests proving cross-tenant reads are filtered, cross-tenant writes are rejected, and missing tenant context exposes no tenant rows.
 - `003_tenant_relational_integrity.*.sql` adding tenant-scoped composite foreign keys so globally valid IDs cannot link objects across tenants.
 - PostgreSQL concurrent-write integrity verification proving tenant-scoped uniqueness remains correct under competing writes.
+- `server/storage/postgres-storage.js` as a pool-injected PostgreSQL transaction boundary that validates tenant UUIDs, binds `app.tenant_id` transaction-locally with parameterized `set_config`, commits or rolls back, and always releases the pooled client.
+- `withIdentityTransaction(identity, operation)` to bind a validated authenticated identity object to the tenant transaction boundary without trusting an arbitrary tenant override from the operation.
+- `test/postgres-storage.test.js` coverage for transaction ordering, fail-closed missing tenant context, authenticated identity binding, rollback, client release, and pool shutdown.
 
 ### Changed
 - Refreshed `exec-planing.md` into the canonical master execution ledger with P0-P3 priorities and evidence gates.
@@ -24,6 +27,7 @@ The format follows Keep a Changelog principles and uses calendar dates while the
 - PostgreSQL migrations now execute and roll back against a real database in CI; this does not yet mean the live Express runtime uses PostgreSQL.
 - Durable-data security now has both RLS isolation and tenant-scoped relational-integrity enforcement at the database layer.
 - `server.js` no longer owns filesystem persistence internals; its `readDB()`/`updateDB()` path delegates to the tested `createJsonStorage` adapter. The live adapter remains JSON-backed pending PostgreSQL application-adapter work.
+- The PostgreSQL adapter contract now has an explicit identity-to-tenant transaction entry point, but Express sessions are not yet tenant-aware and no production Node PostgreSQL pool driver is installed or wired.
 
 ### Verification evidence
 - JSON adapter TDD red: CI `32329601944`; subsequent adapter verification green.
@@ -33,10 +37,13 @@ The format follows Keep a Changelog principles and uses calendar dates while the
 - Tenant relational-integrity TDD red: CI `32331342959`; composite-FK enforcement green: CI `32331409295`.
 - Concurrent PostgreSQL integrity: CI `32331479289` passed with exactly one successful write among 12 competing inserts for the same tenant/email key, followed by all lint/typecheck/build/audit gates.
 - Express storage-boundary TDD red: CI `32333253897`; green: CI `32333372481` passed the new architecture test, existing API regression tests, PostgreSQL tests, lint, typecheck, build, and production dependency audit.
+- PostgreSQL adapter identity-binding TDD red: CI `32337912124` failed because `withIdentityTransaction` did not yet exist.
+- PostgreSQL adapter identity-binding green: CI `32337964164` passed `npm ci`, all tests, lint, typecheck, production build, and production dependency audit.
+- An earlier server-session tenant-identity probe intentionally failed in CI `32337797235`; that exploratory test was reverted because the current connector could not safely patch the large `server.js` file without whole-file replacement. No incomplete server capability is claimed from that probe.
 
 ### Release status
 - FOUNDATION HARDENED / NOT GOLD MASTER.
-- Parent P0 durable PostgreSQL cutover remains incomplete: the live Express boundary now uses an explicit adapter, but that adapter is still JSON-backed and no production PostgreSQL application pool, transaction-scoped tenant context, cutover/rollback, or verified backup/restore drill exists yet.
+- Parent P0 durable PostgreSQL cutover remains incomplete: the live Express boundary is still JSON-backed; no production PostgreSQL driver/pool is wired; Express-authenticated identities do not yet carry tenant IDs; no end-to-end request-to-transaction tenant binding, production cutover/rollback, or verified backup/restore drill exists yet.
 
 ## [2026-08-10]
 
