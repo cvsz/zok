@@ -6,6 +6,7 @@ import { mapLegacyChatToNormalized } from './legacy-chat-mapping.js';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CHECKPOINT_VERSION = 1;
+const IMPORT_LOCK_NAMESPACE = 'zok:legacy-chat-import:v1';
 
 function sameJson(left, right) {
   return isDeepStrictEqual(left ?? {}, right ?? {});
@@ -36,6 +37,10 @@ function prepareChats(chats) {
 
 function sourceDigest(mappedChats) {
   return createHash('sha256').update(JSON.stringify(mappedChats)).digest('hex');
+}
+
+function importLockKey(mappedChats, tenantId) {
+  return `${IMPORT_LOCK_NAMESPACE}:${tenantId}:${sourceDigest(mappedChats)}`;
 }
 
 function buildCheckpoint(mappedChats, tenantId, nextIndex) {
@@ -208,16 +213,21 @@ export async function importLegacyChats({
   if (!storage || typeof storage.withTenantTransaction !== 'function') {
     throw new TypeError('PostgreSQL storage with withTenantTransaction() is required');
   }
-
-  for (let index = startIndex; index < mappedChats.length; index += 1) {
-    await storage.withTenantTransaction(tenantId, async tx => {
-      await importMappedChat(tx, mappedChats[index], summary);
-    });
-
-    if (onCheckpoint) {
-      await onCheckpoint(buildCheckpoint(mappedChats, tenantId, index + 1));
-    }
+  if (typeof storage.withSessionAdvisoryLock !== 'function') {
+    throw new TypeError('PostgreSQL storage with withSessionAdvisoryLock() is required');
   }
 
-  return Object.freeze({ ...summary, dryRun: false });
+  return storage.withSessionAdvisoryLock(importLockKey(mappedChats, tenantId), async () => {
+    for (let index = startIndex; index < mappedChats.length; index += 1) {
+      await storage.withTenantTransaction(tenantId, async tx => {
+        await importMappedChat(tx, mappedChats[index], summary);
+      });
+
+      if (onCheckpoint) {
+        await onCheckpoint(buildCheckpoint(mappedChats, tenantId, index + 1));
+      }
+    }
+
+    return Object.freeze({ ...summary, dryRun: false });
+  });
 }
