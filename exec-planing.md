@@ -9,18 +9,15 @@
 
 This file is the canonical execution source for release work. Every cycle selects the highest-priority incomplete unit that can be implemented and verified safely, records exact evidence, and synchronizes this file with `IMPLEMENTATION-CHECKLIST.md` and `CHANGELOG.md`.
 
-## 1. Release objective
+## 1. Release objective and rules
 
 Deliver Zok as a production-ready conversational-commerce platform without treating UI simulations, mock integrations, demo AI behavior, static metrics, or local-only persistence as production capability.
 
-### Non-negotiable rules
-
 1. No item is complete without current evidence.
 2. Security/release gates are not weakened to make a change pass.
-3. Code-changing cycles must add or update tests and run relevant gates.
-4. Every completed cycle updates `CHANGELOG.md`, `exec-planing.md`, and `IMPLEMENTATION-CHECKLIST.md` together.
-5. Architecture/security behavior changes also update relevant operational documentation.
-6. Broader phases remain incomplete when only a bounded subset is verified.
+3. Code-changing cycles add/update tests and run relevant gates.
+4. Completed cycles synchronize `CHANGELOG.md`, `exec-planing.md`, and `IMPLEMENTATION-CHECKLIST.md`.
+5. Broader phases remain incomplete when only a bounded subset is verified.
 
 ## 2. Current architecture baseline
 
@@ -32,22 +29,23 @@ Browser
   -> auth/session/origin/CSRF/rate-limit/validation middleware
   -> live serialized atomic JSON persistence
 
-CI durable-data verification
+CI durable-data path
   -> PostgreSQL 17 service
-  -> 001_initial.up.sql
-  -> runtime assertions
-  -> 001_initial.down.sql
-  -> replayed up/down verification
+  -> 001 initial schema
+  -> 002 forced tenant RLS
+  -> 003 tenant-scoped relational integrity
+  -> runtime negative/concurrency assertions
+  -> rollback/replay verification
 ```
 
-Evidence now includes a tested JSON storage adapter boundary, an initial tenant-scoped PostgreSQL schema, explicit rollback DDL, and real PostgreSQL migration up/down/replay execution in GitHub Actions. The live Express request path still uses JSON; PostgreSQL is not yet the production runtime store.
+The database foundation now has real-service migration execution, fail-closed tenant row isolation, tenant-scoped relational keys, and concurrent uniqueness evidence. The live Express request path still uses JSON; PostgreSQL is not yet the application runtime store.
 
 ## 3. Master priority queue
 
 ### P0 — Gold-Master blockers
 
-- [ ] Replace local JSON persistence with durable PostgreSQL runtime storage and migrations.
-- [ ] Introduce tenant-aware identity and deny-by-default RBAC.
+- [ ] Replace local JSON persistence with durable PostgreSQL application runtime storage and verified cutover/rollback.
+- [ ] Introduce tenant-aware application identity and deny-by-default RBAC.
 - [ ] Persist append-only audit events for privileged and data-changing actions.
 - [ ] Move sessions and rate-limit state to shared production-capable storage.
 - [ ] Define provider-neutral channel event contracts.
@@ -59,132 +57,99 @@ Evidence now includes a tested JSON storage adapter boundary, an initial tenant-
 
 ### P1 — Production capability
 
-- [ ] Implement real channel adapters for publicly claimed channels.
-- [ ] Implement durable campaigns/broadcast workers.
-- [ ] Implement multi-touch event schema and attribution reconciliation.
-- [ ] Implement migration import with dry-run, idempotency, resumability, and rollback.
-- [ ] Implement POS/e-commerce provider adapters with replay-safe contracts.
-- [ ] Add metrics, traces, structured logs, SLOs, alerts, and incident runbooks.
-- [ ] Add tenant-scoped API keys, rotation, revocation, and secrets handling.
-- [ ] Add export/delete/retention workflows for privacy obligations.
+- [ ] Real publicly claimed channel adapters and durable campaign workers.
+- [ ] Multi-touch attribution and reconciliation.
+- [ ] Migration import with dry-run/idempotency/resumability/rollback.
+- [ ] Replay-safe POS/e-commerce adapters.
+- [ ] Metrics, traces, structured logs, SLOs, alerts, incident runbooks.
+- [ ] Tenant-scoped API keys, rotation, revocation, secrets handling.
+- [ ] Export/delete/retention privacy workflows.
 
 ### P2 — Product completeness
 
-- [ ] Persist onboarding/setup wizard state.
-- [ ] Implement Academy enrollment/completion/certificate verification.
-- [ ] Implement marketplace ownership, publishing, moderation, and versioning.
-- [ ] Add production-backed analytics and operational reporting.
-- [ ] Replace remaining UI-only simulations with explicit sandbox labeling or real services.
-- [ ] Split oversized frontend bundles and enforce performance budgets.
+- [ ] Persist onboarding/setup state.
+- [ ] Academy enrollment/completion/certificate verification.
+- [ ] Marketplace ownership/publishing/moderation/versioning.
+- [ ] Production-backed analytics/reporting.
+- [ ] Replace or explicitly label remaining UI simulations.
+- [ ] Frontend code splitting/performance budgets.
 
 ### P3 — Release polish
 
-- [ ] Accessibility audit/remediation.
-- [ ] Cross-browser/device regression suite.
-- [ ] Final documentation consistency audit.
-- [ ] Release/migration notes.
-- [ ] Support/operator training material.
+- [ ] Accessibility and cross-browser/device regression.
+- [ ] Documentation consistency audit.
+- [ ] Release/migration notes and operator training.
 - [ ] Signed Gold Master evidence record.
 
 ## 4. Durable-data progress
 
-Completed evidence-backed subunits:
+Completed with current repository/CI evidence:
 
 - [x] JSON storage adapter contract with serialized atomic writes and corrupt-state fail-closed behavior.
-- [x] Initial PostgreSQL schema for tenants, roles/users, contacts/conversations/messages, campaigns, integrations, consent, sessions, and audit events.
-- [x] Structural schema regression coverage.
-- [x] PostgreSQL migration up/down verification against a real PostgreSQL 17 service.
-- [x] Migration replay after complete rollback.
+- [x] Initial PostgreSQL multi-tenant schema and explicit rollback DDL.
+- [x] Real PostgreSQL migration up/down/replay verification.
+- [x] Forced RLS on tenant-owned tables using fail-closed `app.tenant_id` policies.
+- [x] RLS negative tests through a non-superuser `NOBYPASSRLS` application role.
+- [x] Tenant-scoped composite foreign keys preventing cross-tenant object references.
+- [x] Concurrent PostgreSQL uniqueness/integrity verification.
 
 Still incomplete:
 
-- [ ] Express request path wired to a storage abstraction.
-- [ ] PostgreSQL runtime adapter with connection pooling and explicit transaction boundaries.
-- [ ] Production cutover from JSON to PostgreSQL.
-- [ ] Runtime tenant-isolation enforcement and negative tests.
-- [ ] PostgreSQL concurrent-write/integrity tests.
+- [ ] Express request path wired through a storage abstraction.
+- [ ] PostgreSQL application adapter with connection pooling and explicit transaction boundaries.
+- [ ] Application-authenticated tenant context safely bound to every PostgreSQL transaction.
+- [ ] Production cutover from JSON to PostgreSQL with data migration and rollback evidence.
 - [ ] Backup/restore drill and recorded RPO/RTO.
 
 ## 5. Verification gates
 
-### Gate A — dependency/repository integrity
+### Gate A
+`npm ci` and `npm audit --omit=dev --audit-level=high` — reproducible install and no unresolved production high/critical vulnerability.
 
-```bash
-npm ci
-npm audit --omit=dev --audit-level=high
-```
+### Gate B
+`npm test`, `npm run lint`, `npm run typecheck` — security-sensitive negative cases fail closed and static gates remain green.
 
-Required: reproducible install, no unresolved production high/critical vulnerability, no committed secrets/runtime DB/build output.
+### Gate C
+`npm run build`, production start/health, and deployment-environment TLS/secure-cookie checks.
 
-### Gate B — automated verification
+### Gate D
+Tenant/RBAC security review, provider replay/contract evidence, AI evaluations, penetration test/remediation, load/capacity evidence, backup restore drill/RPO/RTO, privacy lifecycle evidence, canary/rollback proof, operational sign-off.
 
-```bash
-npm test
-npm run lint
-npm run typecheck
-```
+## 6. Current CI target state
 
-Required: tests pass, no lint errors, typecheck passes, security-sensitive negative cases fail closed.
+CI currently enforces release-document presence, PostgreSQL 17 service health, real database tests, `npm ci`, tests, lint, typecheck, build, production dependency audit, least-privilege permissions, and concurrency cancellation. Workflow failures are release blockers until triaged.
 
-### Gate C — build/runtime smoke
+## 7. Execution order from current head
 
-```bash
-npm run build
-NODE_ENV=production npm start
-curl -fsS http://127.0.0.1:3005/api/health
-```
+Unless a security/CI defect supersedes it:
 
-Required: successful build/start/health plus deployment-environment HTTPS/secure-cookie verification.
+1. Wire the Express request path to an explicit storage boundary without API regressions.
+2. Implement PostgreSQL application adapter/pool/transactions and bind authenticated tenant context per transaction.
+3. Cut over persistence from JSON to PostgreSQL with migration/rollback and backup/restore evidence.
+4. Implement tenant-aware identity/RBAC + append-only audit foundation.
+5. Shared session/rate-limit state.
+6. Provider-neutral event + queue/retry/idempotency base and first channel adapter/consent enforcement.
+7. AI policy/evaluation service, privacy lifecycle, observability/load/DR/security exercises.
+8. Product completeness and Gold Master polish.
 
-### Gate D — enterprise evidence
+Dependabot major-version PRs remain separate until independently compatibility-tested.
 
-Required before Gold Master: tenant/RBAC security review, provider replay/contract evidence, AI evaluations, penetration test/remediation, load/capacity test against SLOs, backup restore drill, privacy lifecycle evidence, monitored canary/rollback proof, and operational sign-off.
-
-## 6. CI target state
-
-Current CI enforces release-document presence, `npm ci`, tests, lint, typecheck, build, production dependency audit, least-privilege permissions, concurrency cancellation, and a health-checked PostgreSQL 17 service for migration execution. Workflow failures remain release blockers until triaged and recorded.
-
-## 7. Execution order
-
-Unless a security/CI blocker supersedes it:
-
-1. Finish durable PostgreSQL runtime foundation: tenant-isolation enforcement/tests, storage wiring, PostgreSQL adapter/pool/transactions, production cutover, concurrent integrity, backup/restore.
-2. Tenant identity/RBAC + append-only audit foundation.
-3. Shared session/rate-limit state.
-4. Provider-neutral events + queue/retry/idempotency base.
-5. First verified channel adapter + consent enforcement.
-6. AI policy/evaluation service.
-7. Privacy lifecycle + migration/attribution/POS.
-8. Observability, load/DR/security exercises.
-9. Product completeness and Gold Master polish.
-
-Dependabot major-version PRs remain separate from this P0 implementation branch until their compatibility is independently verified.
-
-## 8. Current execution evidence — PostgreSQL runtime migration slice
+## 8. Current execution evidence — 2026-08-20 durable PostgreSQL security/integrity
 
 **Branch:** `feat/postgres-storage-foundation`  
 **PR:** #6 (draft)
 
-1. Inspected current plan, open PRs, and CI; reused PR #6.
-2. Added `test/postgres-migration-runtime.test.js` before implementation.
-3. Added PostgreSQL 17 service configuration to `.github/workflows/ci.yml` with a health check and dedicated test database URL.
-4. TDD red: CI `32330868918` reached a healthy PostgreSQL service, confirmed `psql`, and failed only on intentionally absent `scripts/postgres-migrations.js`; pre-existing tests passed.
-5. Added `scripts/postgres-migrations.js` with fail-fast `psql`, `ON_ERROR_STOP=1`, explicit migration paths, and single-transaction execution.
-6. Corrected an initial stdin invocation before completion so migration files are executed deterministically from repository paths.
-7. Green: CI `32330980037` successfully executed initial migration up, verified all expected tables, rolled down, verified teardown, replayed up, rolled down again, then passed all tests, lint, typecheck, production build, and dependency audit.
+- Migration executor test-first: red CI `32330868918`; green up/down/replay CI `32330980037`.
+- Tenant RLS test-first: red CI `32331153421`; green CI `32331262316`. Verification used a non-superuser `NOBYPASSRLS` role, proved per-tenant read visibility, rejected a cross-tenant insert, and exposed zero tenant rows with no tenant context.
+- Tenant relational integrity test-first: red CI `32331342959`; green CI `32331409295`. Composite `(tenant_id, id)` references reject cross-tenant relationships even when the referenced global UUID exists.
+- Concurrent integrity CI `32331479289`: 12 simultaneous inserts for the same `(tenant_id, email)` resulted in exactly one success and one persisted row; tests, lint, typecheck, build, and production audit all passed.
 
-### Status after this slice
+### Residual boundary
 
-- `Migration up/down verification added` is complete and checked in `IMPLEMENTATION-CHECKLIST.md`.
-- The parent P0 durable PostgreSQL item remains incomplete because the live Express runtime still uses JSON.
-- No claim is made for production PostgreSQL cutover, runtime tenant isolation, connection pooling, backup/restore, or horizontal scaling.
-
-### Next safe unit
-
-Add runtime tenant-isolation enforcement/negative tests on PostgreSQL, then continue toward wiring the Express storage boundary and a production PostgreSQL adapter without changing current API behavior until equivalent coverage is green.
+The parent durable-data P0 item stays unchecked. `server.js` still owns the live JSON persistence functions, no PostgreSQL application pool/adapter is wired to the request path, authenticated tenant context is not yet propagated into database transactions, and production backup/restore/cutover evidence does not exist.
 
 ## 9. Release decision
 
-**Current verdict: FOUNDATION HARDENED / NOT GOLD MASTER.**
+**FOUNDATION HARDENED / NOT GOLD MASTER.**
 
-Gold Master promotion is forbidden until every P0 blocker has current evidence and Gate D is signed off.
+Gold Master promotion remains forbidden until every P0 blocker has current evidence and Gate D is signed off.
