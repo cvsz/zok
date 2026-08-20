@@ -24,37 +24,40 @@ Deliver Zok as a production-ready conversational-commerce platform without treat
 ```text
 Browser
   -> Vite/React client
-  -> src/lib/api.js
   -> Express API adapter
-  -> auth/session/origin/CSRF/rate-limit/validation middleware
-  -> explicit storage boundary (`createJsonStorage` today)
-  -> serialized atomic JSON persistence
+  -> authenticated session principal
+       -> validated configured tenantId
+  -> request-to-transaction binding helper
+  -> PostgreSQL storage transaction boundary
+       -> real pg.Pool
+       -> BEGIN
+       -> transaction-local app.tenant_id
+       -> parameterized set_config
+       -> COMMIT / ROLLBACK
+       -> guaranteed client release
 
-PostgreSQL adapter contract
-  -> injected pool contract
-  -> explicit transaction boundary
-  -> validated tenant UUID / authenticated identity tenantId
-  -> transaction-local `app.tenant_id`
-  -> parameterized `set_config`
-  -> commit/rollback + guaranteed client release
+Live application data path today
+  -> explicit storage boundary
+  -> createJsonStorage
+  -> serialized atomic JSON persistence
 
 CI durable-data path
   -> PostgreSQL 17 service
   -> 001 initial schema
   -> 002 forced tenant RLS
   -> 003 tenant-scoped relational integrity
-  -> runtime negative/concurrency assertions
-  -> rollback/replay verification
+  -> real Node pg.Pool isolation assertions
+  -> concurrency / rollback / replay verification
 ```
 
-The Express request path no longer owns filesystem persistence logic directly: `readDB()`/`updateDB()` delegate through the tested storage adapter boundary. The active Express adapter remains JSON-backed. The PostgreSQL foundation now includes a pool-injected transaction adapter contract with fail-closed tenant validation and an authenticated-identity binding entry point, but no production Node PostgreSQL pool driver is installed/wired and Express sessions do not yet carry tenant IDs. PostgreSQL is therefore not yet the application runtime store.
+The PostgreSQL driver, synchronized npm lockfile, real pool, transaction-local tenant context, configured-admin tenant principal, and fail-closed request-to-transaction binding are now verified. The live Express data routes still use the JSON adapter because the existing JSON-shaped API state has not yet been safely mapped to the normalized relational model. PostgreSQL is therefore not yet the live application data store.
 
 ## 3. Master priority queue
 
 ### P0 — Gold-Master blockers
 
 - [ ] Replace local JSON persistence with durable PostgreSQL application runtime storage and verified cutover/rollback.
-- [ ] Introduce tenant-aware application identity and deny-by-default RBAC.
+- [ ] Introduce production tenant-aware application identity and deny-by-default RBAC.
 - [ ] Persist append-only audit events for privileged and data-changing actions.
 - [ ] Move sessions and rate-limit state to shared production-capable storage.
 - [ ] Define provider-neutral channel event contracts.
@@ -94,25 +97,27 @@ The Express request path no longer owns filesystem persistence logic directly: `
 
 Completed with current repository/CI evidence:
 
-- [x] JSON storage adapter contract with serialized atomic writes and corrupt-state fail-closed behavior.
-- [x] Express request path wired through the storage abstraction without API regressions.
-- [x] Initial PostgreSQL multi-tenant schema and explicit rollback DDL.
+- [x] JSON adapter with serialized atomic writes and corrupt-state fail-closed behavior.
+- [x] Express request path wired through an explicit storage boundary.
+- [x] Initial PostgreSQL multi-tenant schema and rollback DDL.
 - [x] Real PostgreSQL migration up/down/replay verification.
-- [x] Forced RLS on tenant-owned tables using fail-closed `app.tenant_id` policies.
-- [x] RLS negative tests through a non-superuser `NOBYPASSRLS` application role.
-- [x] Tenant-scoped composite foreign keys preventing cross-tenant object references.
-- [x] Concurrent PostgreSQL uniqueness/integrity verification.
-- [x] Pool-injected PostgreSQL transaction boundary with explicit begin/commit/rollback, transaction-local tenant context, guaranteed release, and pool shutdown.
-- [x] Authenticated identity object can be fail-closed bound to its validated `tenantId` before entering the tenant transaction boundary.
+- [x] Forced RLS and non-superuser/NOBYPASSRLS negative tests.
+- [x] Tenant-scoped composite foreign keys.
+- [x] Concurrent uniqueness/integrity verification.
+- [x] PostgreSQL transaction adapter with explicit transaction boundaries and transaction-local tenant context.
+- [x] `withIdentityTransaction` fail-closed identity binding.
+- [x] npm-generated synchronized `pg` dependency + lockfile.
+- [x] Real `pg.Pool` integration against PostgreSQL 17 with RLS isolation.
+- [x] Express configured-admin principal can carry validated `tenantId`.
+- [x] Request-to-transaction binding helper rejects missing tenant identity before delegation.
 
 Still incomplete:
 
-- [ ] Production PostgreSQL Node driver/pool installed with a synchronized lockfile and real pool integration coverage.
-- [ ] Express-authenticated session/principal carries a validated tenant ID.
-- [ ] Application-authenticated tenant context proven end-to-end from request principal through every PostgreSQL transaction.
-- [ ] Live Express persistence switched from JSON adapter to PostgreSQL adapter with equivalent regression coverage.
-- [ ] Production cutover from JSON to PostgreSQL with data migration and rollback evidence.
-- [ ] Backup/restore drill and recorded RPO/RTO.
+- [ ] Define explicit normalized repository contracts for live Express resources instead of translating the entire JSON object implicitly.
+- [ ] Switch live Express routes from JSON repositories to PostgreSQL repositories with equivalent behavior/negative regression coverage.
+- [ ] Verify data import/cutover from existing JSON state and rollback.
+- [ ] Verify backup/restore with recorded RPO/RTO.
+- [ ] Replace the bounded configured-admin tenant model with production user/tenant/role resolution and deny-by-default RBAC.
 
 ## 5. Verification gates
 
@@ -130,44 +135,45 @@ Tenant/RBAC security review, provider replay/contract evidence, AI evaluations, 
 
 ## 6. Current CI target state
 
-CI currently enforces release-document presence, PostgreSQL 17 service health, real database tests, `npm ci`, tests, lint, typecheck, build, production dependency audit, least-privilege permissions, and concurrency cancellation. Workflow failures are release blockers until triaged.
+CI enforces release-document presence, PostgreSQL 17 service health, real database migrations and pool/RLS tests, `npm ci`, tests, lint, typecheck, build, production dependency audit, least-privilege permissions, and concurrency cancellation. Workflow failures remain release blockers until triaged.
 
 ## 7. Execution order from current head
 
 Unless a security/CI defect supersedes it:
 
-1. Install/wire a real PostgreSQL Node pool driver with a synchronized lockfile and exercise the transaction adapter against the PostgreSQL CI service.
-2. Add a validated tenant ID to the authenticated application principal/session and use `withIdentityTransaction` at the database boundary.
-3. Switch the Express storage boundary from JSON to PostgreSQL with equivalent API regression coverage.
-4. Cut over production persistence with migration/rollback and backup/restore evidence.
-5. Implement deny-by-default RBAC + append-only audit foundation.
-6. Shared session/rate-limit state.
+1. Define narrow PostgreSQL repository contracts for the highest-value live resources (contacts/conversations/messages first) with relational read/write semantics and tenant transaction enforcement.
+2. Wire those Express routes through request identity → PostgreSQL transaction → repository, preserving current API regression behavior.
+3. Migrate remaining live resources (campaigns, integrations, AI/flow state) without introducing a monolithic JSON-in-PostgreSQL compatibility shortcut.
+4. Build and verify JSON→PostgreSQL import/cutover + rollback and backup/restore evidence.
+5. Implement production tenant-aware user identity, deny-by-default RBAC, and append-only audit foundation.
+6. Move sessions and rate-limit state to shared production storage.
 7. Provider-neutral event + queue/retry/idempotency base and first channel adapter/consent enforcement.
 8. AI policy/evaluation service, privacy lifecycle, observability/load/DR/security exercises.
 9. Product completeness and Gold Master polish.
 
 Dependabot major-version PRs remain separate until independently compatibility-tested.
 
-## 8. Current execution evidence — 2026-08-20 PostgreSQL identity-to-tenant transaction binding
+## 8. Current execution evidence — 2026-08-20 real PostgreSQL pool + request tenant binding
 
 **Branch:** `feat/postgres-storage-foundation`  
 **PR:** #6 (draft)
 
-- Reused the existing durable-data PR; no duplicate PR was created.
-- Confirmed the current branch was green at CI `32335166312` before this cycle.
-- Explored direct Express-session tenant propagation with a failing regression probe; CI `32337797235` failed exactly because login/me responses lacked `tenantId`. That exploratory test was reverted because the current connector could not safely patch the large `server.js` file without whole-file replacement. No server-side tenant-principal capability is claimed from that probe.
-- Added TDD coverage in `test/postgres-storage.test.js` for an authenticated identity object carrying `tenantId` and for fail-closed rejection before pool acquisition when the identity lacks a valid tenant ID.
-- TDD red: CI `32337912124` failed because `withIdentityTransaction` did not exist.
-- Implemented `withIdentityTransaction(identity, operation)` in `server/storage/postgres-storage.js`; it validates identity shape and tenant UUID, then delegates to the existing transaction-local tenant boundary.
-- Green: CI `32337964164` passed `npm ci`, all tests, lint, typecheck, production build, and production dependency audit.
+- Generated `pg` dependency + lockfile through npm in a temporary branch workflow and removed the temporary write-enabled workflow immediately after synchronization.
+- Real pool integration TDD red: `32344793562` failed because `createPostgresPool` did not exist.
+- `32344862826` exposed a test-isolation race when migration tests created `pgcrypto` concurrently on one database. The production migration was not weakened; the new integration test was isolated to its own database.
+- Real `pg.Pool` + RLS integration green: `32344957870`.
+- Express tenant-principal red: `32345044007` returned `{email, role}` without tenant context.
+- Added validated `ZOK_ADMIN_TENANT_ID`; malformed configured tenant IDs fail startup validation and configured tenant context is included in login/session principal. Green: `32345360432`.
+- Request-to-transaction binding red: `32345449008` because the helper did not exist.
+- Added `withRequestTransaction`, which requires an authenticated valid tenant identity before delegating to `withIdentityTransaction`. Green: `32345518040`.
 
 ### Residual boundary
 
-The parent durable-data and tenant-aware identity P0 items stay unchecked. The live Express adapter remains JSON-backed; no production PostgreSQL Node pool driver is installed, Express sessions still do not carry tenant IDs, and no end-to-end request-principal-to-PostgreSQL-transaction path has been proven. Production migration/cutover/rollback and backup/restore evidence also remain absent.
+The parent durable-data P0 item stays unchecked. The verified PostgreSQL boundary is ready for relational repositories, but all live Express data routes still call the JSON adapter. There is no verified JSON→relational import/cutover/rollback or backup/restore drill. The configured-admin `tenantId` is a bounded transitional principal, not a complete production multi-user identity/RBAC model.
 
 ### Next safe unit
 
-Generate and commit a synchronized lockfile for the selected PostgreSQL Node driver in a normal npm-enabled checkout, wire its pool into the verified adapter, and add real PostgreSQL pool integration tests. After that is green, propagate a validated tenant ID into the Express authenticated principal and bind request-driven database operations through `withIdentityTransaction`.
+Define a tenant-scoped PostgreSQL repository for contacts/conversations/messages and contract-test it against PostgreSQL 17. Then wire a bounded Express read/write route through `withRequestTransaction` without changing unrelated JSON-backed routes. Expand only after equivalent API/security behavior is green.
 
 ## 9. Release decision
 
