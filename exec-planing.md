@@ -55,12 +55,14 @@ Draft PR #17 import and verification foundation
   -> one committed tenant transaction per chat
   -> checkpoint emitted/persisted only after commit
   -> explicit --resume validates checkpoint before continuing
+  -> same-tenant/source write imports hold a database-backed session advisory lock
+  -> competing acquisition uses pg_try_advisory_lock and fails closed rather than racing silently
   -> service-backed cutover/rollback regression proves PostgreSQL message reads do not silently mix divergent JSON history
   -> missing expected imports fail the PostgreSQL read path with 503
   -> restart in JSON mode proves rollback store remains readable and intact
 ```
 
-PR #6 merged the PostgreSQL schema/RLS/transaction/repository/compatibility foundation. PR #15 merged the request-bound legacy chat PostgreSQL runtime. PR #16 merged the configuration-gated chat message read/write path as merge commit `dc677799cbac6ee793a612330313b1c39f5cc7ca`; synchronized-head CI `32362766907` was green before merge. `main` baseline for PR #17 is `29f0055d439fda5cf5ac8bab5d8755b371be1817`. Draft PR #17 now proves deterministic import dry-run, replay/idempotency, source-bound resumability checkpoints, interruption/restart continuation, and a bounded cutover/rollback read boundary; it does not perform production cutover or migrate JSON-owned metadata.
+PR #6 merged the PostgreSQL schema/RLS/transaction/repository/compatibility foundation. PR #15 merged the request-bound legacy chat PostgreSQL runtime. PR #16 merged the configuration-gated chat message read/write path as merge commit `dc677799cbac6ee793a612330313b1c39f5cc7ca`; synchronized-head CI `32362766907` was green before merge. `main` baseline for PR #17 is `29f0055d439fda5cf5ac8bab5d8755b371be1817`. Draft PR #17 now proves deterministic import dry-run, replay/idempotency, source-bound resumability checkpoints, interruption/restart continuation, bounded cutover/rollback read behavior, and same-tenant/source competing-import exclusion. It does not perform production cutover or migrate JSON-owned metadata.
 
 ## 3. Master priority queue
 
@@ -118,10 +120,10 @@ Completed with current repository evidence:
 - [x] Deterministic legacy chat import dry-run + replay/idempotency foundation on draft PR #17. Evidence: importer `a94042d1fc5dc2b013261167c26c96c5d433fac2`, CLI `24b10ae585bcd52bc87c0ff7cc20922e00d7ae0f`, structural replay comparison `becd258ef396e43732816fdc6d0ae5055c5fe6d8`, tests `abc559a7593d657a373cd645eea90295268f4ca0`, implementation CI `32367095289`, synchronized-head CI `32367337923`.
 - [x] Resumable/checkpointed chat import with interruption/restart evidence on draft PR #17. Evidence: checkpointed importer `4ec62fd68bf7a786edc585918a12c23e6f6422f4`, atomic checkpoint CLI `a3790630253fb095f11c27613d3796f5682d556c`, interruption/restart/source-binding tests `7616dfc8eb23cd7fc3bf0b2ea7e2e71fc928cfed`, implementation-head CI `32372290510` green.
 - [x] Bounded chat cutover/rollback read boundary on draft PR #17. Evidence: `test/postgres-chat-cutover-rollback.test.js`, commit `4376ff02ec5260c5da69cae1bd7a5792644efbf4`, implementation-head CI `32377588551`. The regression imports source state, makes JSON message history deliberately divergent, verifies PostgreSQL mode serves only imported PostgreSQL messages, verifies an expected missing import returns `503` rather than a mixed response, then restarts in JSON mode and verifies the rollback file remains readable and intact.
+- [x] Same-tenant/source concurrent importer coordination on draft PR #17. Evidence: PostgreSQL session advisory-lock primitive `e17e7048f2664d20a2b1520635b09d1b716ac413`, importer lock integration `1a9c46472dd67322cc9ad5c3681d3f041c5e168c`, PostgreSQL service-backed concurrency regression `962e603e66e96ed454a117b05b4d23662f058c1a`, implementation-head CI `32383484862`. The first importer holds a database lock across the write loop/checkpoint callback; a competing importer for the same tenant/source fails closed, committed rows remain singular, and replay succeeds after release.
 
 Still incomplete:
 
-- [ ] Same-tenant/source concurrent importer serialization/coordination policy and verification.
 - [ ] Production chat cutover and explicit operational rollback verification.
 - [ ] Move chat metadata/unread/tags from JSON only after production cutover evidence is green.
 - [ ] Migrate campaigns, integrations, AI config, and flow state.
@@ -148,16 +150,18 @@ Implemented and verified bounded behavior:
 - PostgreSQL service-backed regression injects an interruption immediately after the first durable checkpoint, verifies only the first chat committed, resumes from `nextIndex=1`, completes the second chat without replaying the first, and rejects changed source data against the checkpoint.
 - Import/resume implementation commits: `4ec62fd68bf7a786edc585918a12c23e6f6422f4`, `a3790630253fb095f11c27613d3796f5682d556c`, `7616dfc8eb23cd7fc3bf0b2ea7e2e71fc928cfed`.
 - Resumability CI `32372290510` passed release-document checks, PostgreSQL service/client verification, `npm ci`, tests, lint, typecheck, production build, and production dependency audit.
-- `test/postgres-chat-cutover-rollback.test.js` adds the next bounded verification without changing `server.js`, the gate implementation, or the default runtime mode.
-- The test imports one deterministic legacy chat into PostgreSQL through the same non-superuser/NOBYPASSRLS application boundary, then deliberately changes the JSON copy's message history.
-- With `ZOK_CHAT_STORAGE=postgres`, `/api/chats` returns the imported PostgreSQL message, not the divergent JSON message.
-- When a second JSON chat exists without a corresponding PostgreSQL import, the PostgreSQL read returns `503` with `PostgreSQL chat import is incomplete` rather than silently mixing the two stores.
-- After stopping the PostgreSQL-mode server and starting a fresh server module in `ZOK_CHAT_STORAGE=json`, the JSON rollback data is returned intact, including the JSON-only chat.
+- `test/postgres-chat-cutover-rollback.test.js` adds bounded verification without changing `server.js`, the gate implementation, or the default runtime mode.
+- With `ZOK_CHAT_STORAGE=postgres`, deterministic imported PostgreSQL messages win over divergent JSON message history; an expected missing import returns `503`; restart in JSON mode returns rollback state intact.
 - Cutover/rollback regression commit `4376ff02ec5260c5da69cae1bd7a5792644efbf4`; implementation-head CI `32377588551` passed release-control documents, PostgreSQL service/client verification, `npm ci`, all tests, lint, typecheck, production build, and production dependency audit.
+- `server/storage/postgres-storage.js` now exposes `withSessionAdvisoryLock(lockKey, operation)`. It validates the key, acquires a dedicated pool client, uses `pg_try_advisory_lock(hashtextextended($1, 0))`, fails closed when the key is already held, unlocks in `finally`, and always releases the client.
+- Legacy chat import derives its lock key from a fixed namespace, tenant UUID, and deterministic normalized-source SHA-256 digest, then holds the lock around the full write loop and checkpoint callbacks.
+- `test/legacy-chat-import-concurrency.test.js` pauses the first importer after a committed checkpoint while the advisory lock remains held, verifies a competing same-tenant/source importer is rejected, verifies only one contact/conversation/message is durable, releases the first importer, then verifies ordinary replay remains idempotent.
+- Concurrency implementation commits: `e17e7048f2664d20a2b1520635b09d1b716ac413`, `1a9c46472dd67322cc9ad5c3681d3f041c5e168c`, `962e603e66e96ed454a117b05b4d23662f058c1a`.
+- Concurrency implementation-head CI `32383484862` passed release-control documents, PostgreSQL service/client verification, `npm ci`, tests, lint, typecheck, production build, and production dependency audit.
 
 ### Residual boundary
 
-The cutover/rollback slice is evidence around the existing configuration gate; it is **not** a production cutover. `ZOK_CHAT_STORAGE=json` remains the default runtime and rollback path. Chat metadata, unread state, and tags remain JSON-owned in both modes. No production dataset is migrated by this regression, no operational cutover/canary window is exercised, and no backup/restore RPO/RTO is proven. Same-tenant/source concurrent importer serialization remains unproven. The durable-data P0 parent therefore remains incomplete.
+The concurrency slice proves exclusion for competing imports of the **same tenant and deterministic source**; it does not claim general operational parallel-import safety for different sources/tenants, lock observability/SLOs, or a production import runbook. The earlier cutover/rollback slice remains regression evidence around the existing configuration gate, not a production cutover. `ZOK_CHAT_STORAGE=json` remains the default runtime and rollback path. Chat metadata, unread state, and tags remain JSON-owned. No production dataset is migrated by these regressions, no operational canary window is exercised, and no backup/restore RPO/RTO is proven. The durable-data P0 parent therefore remains incomplete.
 
 Local clone/install verification remains unavailable because the execution environment cannot resolve `github.com`; GitHub Actions is the execution evidence.
 
@@ -179,9 +183,9 @@ Tenant/RBAC security review, provider replay/contract evidence, AI evaluations, 
 
 Unless a security/CI defect supersedes it:
 
-1. Define and verify same-tenant/source concurrent-import coordination so competing importers cannot silently race; preserve deterministic checkpoints and replay guarantees.
-2. After concurrency evidence is green, plan a bounded operational chat cutover/rollback exercise without changing the default prematurely.
-3. Migrate chat metadata/unread/tags, then campaigns/integrations, then AI/flow state.
+1. Define and verify a bounded operational chat cutover/rollback rehearsal using already-imported deterministic state. Keep JSON as default, require explicit preflight/failure criteria, and preserve rollback proof.
+2. After operational cutover rehearsal evidence is green, migrate chat metadata/unread/tags without widening unrelated resources in the same slice.
+3. Migrate campaigns/integrations, then AI/flow state.
 4. Complete application-wide JSON→PostgreSQL cutover + rollback and backup/restore evidence.
 5. Implement production tenant-aware identity, deny-by-default RBAC, append-only audit, shared sessions/rate-limit state.
 6. Provider-neutral event + delivery reliability + consent enforcement.
@@ -192,7 +196,7 @@ Dependabot major-version PRs remain separate until independently compatibility-t
 
 ## 8. Next safe unit
 
-Define and verify a same-tenant/source concurrent-import coordination policy. Competing importers must not be able to race the same deterministic source silently or corrupt checkpoint/replay guarantees. Prefer a database-backed coordination primitive that fails closed or serializes safely and add PostgreSQL service-backed concurrency regression coverage. Do not claim operational parallel import, change the default storage mode, migrate metadata/unread/tags, or widen the live PostgreSQL surface in that slice.
+Define and verify a bounded operational chat cutover/rollback rehearsal using already-imported deterministic state. Add explicit preflight criteria that fail closed when required imported state is incomplete, exercise the configuration transition and rollback path in a controlled service-backed harness, and record observable success/failure criteria. Keep `ZOK_CHAT_STORAGE=json` as the default; do not migrate metadata/unread/tags, widen the live PostgreSQL surface, or claim production canary readiness in that slice.
 
 ## 9. Release decision
 
