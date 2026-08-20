@@ -6,7 +6,6 @@ import os from 'node:os';
 import path from 'node:path';
 
 const password = 'test-password-1234';
-const tenantId = '99999999-9999-4999-8999-999999999999';
 const testDirectory = await mkdtemp(path.join(os.tmpdir(), 'zok-api-'));
 const databaseFile = path.join(testDirectory, 'db.json');
 const salt = 'test-salt-for-zok';
@@ -17,7 +16,6 @@ process.env.ZOK_NO_LISTEN = 'true';
 process.env.ZOK_DB_FILE = databaseFile;
 process.env.ZOK_ADMIN_EMAIL = 'admin@example.test';
 process.env.ZOK_ADMIN_PASSWORD_HASH = passwordHash;
-process.env.ZOK_TENANT_ID = tenantId;
 process.env.ZOK_ALLOWED_ORIGINS = 'http://127.0.0.1:5175';
 
 const { startServer } = await import('../server.js');
@@ -68,7 +66,7 @@ test('API release hardening protects and validates the real request path', async
     body: JSON.stringify({ email: 'admin@example.test', password }),
   });
   assert.equal(login.status, 200);
-  assert.deepEqual((await login.json()).user, { email: 'admin@example.test', role: 'owner', tenantId });
+  assert.deepEqual((await login.json()).user, { email: 'admin@example.test', role: 'owner' });
 
   const setCookie = login.headers.get('set-cookie');
   assert.ok(setCookie);
@@ -77,7 +75,7 @@ test('API release hardening protects and validates the real request path', async
 
   const me = await fetch(`${baseUrl}/api/auth/me`, { headers: authenticatedHeaders });
   assert.equal(me.status, 200);
-  assert.deepEqual((await me.json()).user, { email: 'admin@example.test', role: 'owner', tenantId });
+  assert.deepEqual((await me.json()).user, { email: 'admin@example.test', role: 'owner' });
 
   const chats = await fetch(`${baseUrl}/api/chats`, { headers: authenticatedHeaders });
   assert.equal(chats.status, 200);
