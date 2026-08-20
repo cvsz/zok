@@ -46,6 +46,22 @@ test('PostgreSQL storage binds tenant context transaction-locally and releases p
   assert.equal(fake.ended(), 1);
 });
 
+test('PostgreSQL storage binds an authenticated identity to its tenant transaction', async () => {
+  const tenantId = '77777777-7777-4777-8777-777777777777';
+  const fake = createFakePool();
+  const storage = createPostgresStorage({ pool: fake.pool });
+  const identity = Object.freeze({ userId: 'user-1', role: 'owner', tenantId });
+
+  const result = await storage.withIdentityTransaction(identity, tx => tx.query('SELECT application_work'));
+  assert.equal(result.rows[0].ok, true);
+  assert.deepEqual(fake.calls[1], {
+    text: "SELECT set_config('app.tenant_id', $1, true)",
+    values: [tenantId],
+  });
+
+  await storage.close();
+});
+
 test('PostgreSQL storage rejects missing tenant context before acquiring a pooled client', async () => {
   const fake = createFakePool();
   let connects = 0;
@@ -58,6 +74,10 @@ test('PostgreSQL storage rejects missing tenant context before acquiring a poole
   await assert.rejects(
     () => storage.withTenantTransaction('', async () => undefined),
     /tenantId is required/i,
+  );
+  await assert.rejects(
+    () => storage.withIdentityTransaction({ userId: 'user-1', role: 'owner' }, async () => undefined),
+    /identity tenantId is required/i,
   );
   assert.equal(connects, 0);
   await storage.close();
