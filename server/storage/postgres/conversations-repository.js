@@ -72,5 +72,39 @@ export function createConversationsRepository(tx) {
     return result.rows;
   }
 
-  return Object.freeze({ create, addMessage, list });
+  async function findByExternalThreadId(externalThreadId) {
+    if (typeof externalThreadId !== 'string' || !externalThreadId.trim()) {
+      throw new TypeError('External thread id is required');
+    }
+    const normalizedExternalThreadId = externalThreadId.trim();
+    if (normalizedExternalThreadId.length > 255) {
+      throw new TypeError('External thread id exceeds 255 characters');
+    }
+
+    const result = await tx.query(`
+      SELECT c.id, c.contact_id AS "contactId", c.channel, c.external_thread_id AS "externalThreadId",
+        c.status, c.created_at AS "createdAt", c.updated_at AS "updatedAt"
+      FROM conversations c
+      WHERE c.external_thread_id = $1
+      LIMIT 1
+    `, [normalizedExternalThreadId]);
+    return result.rows[0] || null;
+  }
+
+  async function listMessages(conversationId) {
+    if (typeof conversationId !== 'string' || !UUID_PATTERN.test(conversationId)) {
+      throw new TypeError('Valid conversation id is required');
+    }
+
+    const result = await tx.query(`
+      SELECT m.id, m.conversation_id AS "conversationId", m.direction, m.sender_type AS "senderType",
+        m.body, m.external_message_id AS "externalMessageId", m.metadata, m.sent_at AS "sentAt"
+      FROM messages m
+      WHERE m.conversation_id = $1
+      ORDER BY m.sent_at ASC, m.id ASC
+    `, [conversationId]);
+    return result.rows;
+  }
+
+  return Object.freeze({ create, addMessage, list, findByExternalThreadId, listMessages });
 }
