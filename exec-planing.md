@@ -39,6 +39,7 @@ Browser
 Normalized PostgreSQL repository foundation
   -> contacts repository
   -> conversations/messages repository
+  -> legacy chat compatibility mapper
   -> RLS + tenant-scoped composite FK enforcement
 
 Live application data path today
@@ -47,7 +48,7 @@ Live application data path today
   -> serialized atomic JSON persistence
 ```
 
-The PostgreSQL driver, synchronized npm lockfile, real pool, transaction-local tenant context, request binding, contacts repository, and conversations/messages repository are now verified against PostgreSQL 17. The live Express data routes remain JSON-backed because current `/api/chats` responses use a legacy aggregate shape that must be mapped deliberately to normalized contact/conversation/message records. PostgreSQL is not yet the live application store.
+The PostgreSQL driver, synchronized npm lockfile, real pool, transaction-local tenant context, request binding, contacts repository, conversations/messages repository, and pure legacy-chat compatibility mapping now exist on the implementation branch. The live Express data routes remain JSON-backed. PostgreSQL is not yet the live application store.
 
 ## 3. Master priority queue
 
@@ -89,7 +90,7 @@ The PostgreSQL driver, synchronized npm lockfile, real pool, transaction-local t
 
 ## 4. Durable-data progress
 
-Completed with current repository/CI evidence:
+Completed with current repository evidence:
 
 - [x] JSON adapter with serialized atomic writes and corrupt-state fail-closed behavior.
 - [x] Express request path wired through an explicit storage boundary.
@@ -104,10 +105,11 @@ Completed with current repository/CI evidence:
 - [x] Tenant-scoped contacts repository with validation and real PostgreSQL coverage.
 - [x] Tenant-scoped conversations/messages repository with validated channel/direction/sender semantics.
 - [x] Real contact → conversation → message integration under PostgreSQL RLS and tenant-scoped relational integrity.
+- [x] Explicit pure compatibility mapping from legacy `/api/chats` aggregates to normalized repository inputs, with stable legacy IDs and fail-closed contract tests. Source evidence: test-first commit `26906f28c34d74077c3e496d0ddbf1ab21a080fb`, implementation `777af487395161b74fc1be472d1f5ddd448c73fb`; synchronized-head CI remains pending.
 
 Still incomplete:
 
-- [ ] Define an explicit compatibility mapping between legacy `/api/chats` payloads and normalized contact/conversation/message resources.
+- [ ] Obtain green synchronized-head CI for the legacy mapping slice.
 - [ ] Cut over a bounded Express read/write route through `withRequestTransaction` and PostgreSQL repositories with equivalent auth/CSRF/validation behavior.
 - [ ] Migrate remaining live resources: campaigns, integrations, AI config, flow state.
 - [ ] Verify JSON→PostgreSQL import/cutover and rollback.
@@ -136,7 +138,7 @@ CI enforces release-document presence, PostgreSQL 17 service health, real migrat
 
 Unless a security/CI defect supersedes it:
 
-1. Define and test the legacy `/api/chats` ↔ normalized contact/conversation/message mapping without changing the live route.
+1. Obtain green synchronized-head CI for the legacy compatibility mapper and its fail-closed contract tests.
 2. Cut over one bounded chat read/write path through authenticated request → `withRequestTransaction` → normalized PostgreSQL repositories, preserving current security and API regression behavior.
 3. Expand chat/message cutover only after the bounded route is green; retain an explicit rollback switch until import/cutover evidence exists.
 4. Add PostgreSQL repositories for campaigns and integrations, then AI/flow state.
@@ -148,23 +150,26 @@ Unless a security/CI defect supersedes it:
 
 Dependabot major-version PRs remain separate until independently compatibility-tested.
 
-## 8. Current execution evidence — 2026-08-20 normalized relational repository foundation
+## 8. Current execution evidence — 2026-08-20 legacy chat compatibility mapping
 
 **Branch:** `feat/postgres-storage-foundation`  
 **PR:** #6 (draft)
 
-- Contacts repository test-first red `32345736541` (missing repository). `32345808587` then exposed a whitespace-sensitive fake-query bug; production SQL was not changed to satisfy the faulty test stub.
-- Real transaction-context red `32345984084` proved `tx.tenantId` was absent. The transaction boundary now exposes the already-validated tenant ID; green `32346064982` also verified contacts repository behavior against PostgreSQL.
-- Conversations/messages repository test-first red `32346149065`; implementation green `32346242401` with all release gates passing.
-- Real relational integration `32346343315` verified tenant A contact→conversation→message writes, tenant B conversation isolation, cross-tenant relationship rejection at the composite-FK boundary, RLS enforcement, and all standard gates.
+- Existing PR #6 was reused; no duplicate implementation PR was created and no merge was performed.
+- Test-first commit `26906f28c34d74077c3e496d0ddbf1ab21a080fb` defines the compatibility contract before any live route change.
+- Implementation commit `777af487395161b74fc1be472d1f5ddd448c73fb` adds a pure mapper only; it does not alter Express persistence.
+- Stable compatibility keys are `legacy-chat:<id>` for contact/thread identity and `legacy-chat:<id>:message:<index>` for legacy messages.
+- Customer→inbound and agent→outbound semantics are explicit. Unsupported channels/senders and malformed IDs/text/tags fail closed.
+- Display-only legacy time strings are retained as metadata rather than converted into fabricated timestamps.
+- At synchronization time GitHub had not exposed a workflow run for the new head, so this slice is not recorded as CI-verified yet. Previous head `1d1ac590c381822adc85b8dbd02d156a401d2e1f` remains green in CI `32346519607` but does not verify this new mapper.
 
 ### Residual boundary
 
-The parent durable-data P0 item stays unchecked. Repository infrastructure is now real and tenant-scoped, but live Express data routes still use the JSON adapter. No verified legacy payload mapping, JSON→relational import/cutover/rollback, backup/restore drill, or production multi-user identity/RBAC model exists yet.
+The parent durable-data P0 item stays unchecked. Live Express data routes still use the JSON adapter. The compatibility mapper is not a production cutover, import, rollback, backup/restore, or multi-user identity/RBAC implementation.
 
 ### Next safe unit
 
-Create a pure compatibility mapper for the legacy chat API shape and contract-test it against normalized repository records. Then introduce a configuration-gated bounded PostgreSQL chat route in tests only, preserving JSON as the rollback path until end-to-end API and migration evidence is green.
+First require a green synchronized-head CI run for this mapping slice. Only then introduce a configuration-gated bounded PostgreSQL chat route with API/security regression tests and JSON retained as an explicit rollback path.
 
 ## 9. Release decision
 
