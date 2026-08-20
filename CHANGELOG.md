@@ -20,11 +20,13 @@ The format follows Keep a Changelog principles and uses calendar dates while the
 - `server/storage/postgres/contacts-repository.js` for tenant-scoped normalized contact reads/creates with validation.
 - `server/storage/postgres/conversations-repository.js` for tenant-scoped conversation creation, message insertion, and conversation listing with validated channel/direction/sender semantics.
 - Real PostgreSQL relational repository integration proving contact → conversation → message writes, tenant isolation, and cross-tenant relationship rejection.
+- Pure legacy-chat compatibility mapper with deterministic `legacy-chat:<id>` contact/thread IDs and indexed message IDs, explicit sender/direction mapping, metadata preservation, and fail-closed validation.
 
 ### Changed
 - `server.js` delegates filesystem persistence to `createJsonStorage` rather than owning JSON write internals.
 - PostgreSQL transaction callbacks now expose the already-validated `tenantId` to repository code so repositories do not accept caller-supplied tenant overrides.
 - Durable-data execution now requires incremental normalized repository and route cutover rather than a monolithic JSON-in-PostgreSQL compatibility shortcut.
+- Legacy display-only message times are preserved as metadata rather than being invented as database timestamps during compatibility mapping.
 
 ### Verification evidence
 - JSON adapter red `32329601944`; subsequent adapter green.
@@ -41,10 +43,11 @@ The format follows Keep a Changelog principles and uses calendar dates while the
 - Contacts repository red `32345736541`; `32345808587` identified a test-harness whitespace bug; real transaction tenant-context red/green `32345984084` / `32346064982`.
 - Conversations/messages repository red/green `32346149065` / `32346242401`.
 - Real normalized relational repository integration green `32346343315`.
+- Legacy compatibility mapping contract added test-first in commit `26906f28c34d74077c3e496d0ddbf1ab21a080fb`; implementation commit `777af487395161b74fc1be472d1f5ddd448c73fb`. Final CI evidence is recorded only after the synchronized head completes.
 
 ### Release status
 - FOUNDATION HARDENED / NOT GOLD MASTER.
-- Live Express data routes remain JSON-backed. The next blocker is a deliberate compatibility/import mapping for legacy chat IDs and aggregate payload shape before bounded route cutover. JSON→PostgreSQL migration/rollback, backup/restore, production multi-user tenant identity/RBAC, shared session/rate-limit state, and remaining Gate D evidence remain incomplete.
+- Live Express data routes remain JSON-backed. Legacy chat mapping is now explicit and contract-tested in source, but route cutover, JSON→PostgreSQL migration/rollback, backup/restore, production multi-user tenant identity/RBAC, shared session/rate-limit state, and remaining Gate D evidence remain incomplete.
 
 ## [2026-08-10]
 
