@@ -38,6 +38,7 @@ This checklist is the operational companion to `exec-planing.md`. Items may be c
 - [x] Tenant-scoped normalized contacts repository implemented with validation and real PostgreSQL/RLS coverage. Evidence: repository red `32345736541`; test-harness defect isolated in `32345808587`; transaction/runtime green `32346064982`.
 - [x] Tenant-scoped conversations/messages repository implemented with validated channels/directions/sender types. Evidence: red `32346149065`, green `32346242401`.
 - [x] Real PostgreSQL 17 integration verifies contact → conversation → message writes for tenant A, no conversation visibility for tenant B, and database rejection of cross-tenant contact references. Evidence: CI `32346343315`.
+- [x] Legacy `/api/chats` aggregate compatibility mapping is explicit and deterministic: stable legacy contact/thread/message IDs, sender→direction mapping, metadata preservation, and fail-closed malformed-input handling. Evidence: test-first commit `26906f28c34d74077c3e496d0ddbf1ab21a080fb`, implementation `777af487395161b74fc1be472d1f5ddd448c73fb`; synchronized-head CI still required before route cutover.
 - [ ] Live Express data routes switched from JSON to PostgreSQL with equivalent API regression coverage.
 - [ ] Production JSON→PostgreSQL data migration/cutover and rollback procedure verified.
 - [ ] Backup and restore procedure verified with recorded RPO/RTO.
@@ -119,16 +120,16 @@ This checklist is the operational companion to `exec-planing.md`. Items may be c
 - [ ] Support/operator training material prepared.
 - [ ] Gold Master evidence record signed.
 
-## Current execution cycle — 2026-08-20 normalized relational repositories
+## Current execution cycle — 2026-08-20 legacy chat compatibility mapping
 
-- [x] Reused draft PR #6; no duplicate implementation PR created.
-- [x] Corrected whitespace-sensitive contacts repository test fake after `32345808587`; production SQL was not changed to satisfy the defective stub.
-- [x] Real transaction context test red `32345984084` proved repositories were not receiving tenant context; transaction object now exposes the validated tenant ID and greened in `32346064982`.
-- [x] Contacts repository validation/list/create contract verified.
-- [x] Conversations/messages repository added test-first: red `32346149065`, green `32346242401`.
-- [x] Real relational repository integration green `32346343315` with RLS and tenant-scoped composite FK enforcement.
-- [x] Parent durable-data P0 remains incomplete because all live Express data routes still use the JSON adapter and production migration/cutover/rollback plus backup/restore evidence do not exist.
-- [x] `CHANGELOG.md`, `exec-planing.md`, and `IMPLEMENTATION-CHECKLIST.md` synchronized.
+- [x] Reused draft PR #6; no duplicate implementation PR created and no merge performed.
+- [x] Defined a pure compatibility contract before changing any live Express route.
+- [x] Stable IDs are retry-safe: `legacy-chat:<id>` for contact/thread and `legacy-chat:<id>:message:<index>` for legacy messages.
+- [x] Customer messages map inbound; agent messages map outbound; unsupported senders/channels and malformed IDs/text/tags fail closed.
+- [x] Legacy display-only time labels remain metadata and are not promoted to invented timestamps.
+- [x] Parent durable-data P0 remains incomplete: live Express data routes are still JSON-backed; production import/cutover/rollback and backup/restore evidence do not exist.
+- [ ] Synchronized-head CI evidence for this slice. GitHub had not exposed a workflow run for the new head at document-sync time; do not treat the mapper as route-cutover evidence until CI is green.
+- [x] `CHANGELOG.md`, `exec-planing.md`, and `IMPLEMENTATION-CHECKLIST.md` synchronized for source-level scope and residual risks.
 
 ## Gold Master rule
 
