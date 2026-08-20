@@ -141,38 +141,67 @@ test('configuration-gated chat API owns messages/read/tags in PostgreSQL while p
   assert.deepEqual(taggedChat.details.tags, ['Priority', 'Postgres']);
   assert.equal(taggedChat.unread, 0);
 
-  const rollbackAfterMetadataWrites = JSON.parse(await readFile(databaseFile, 'utf8'));
-  assert.equal(rollbackAfterMetadataWrites.chats[0].unread, 2);
-  assert.deepEqual(rollbackAfterMetadataWrites.chats[0].details.tags, ['New Lead', 'LINE OA', 'Medical Service']);
+  const rollbackAfterMetadataWrites = await readFile(databaseFile, 'utf8');
+  const rollbackAfterMetadataWritesJson = JSON.parse(rollbackAfterMetadataWrites);
+  assert.equal(rollbackAfterMetadataWritesJson.chats[0].unread, 2);
+  assert.deepEqual(rollbackAfterMetadataWritesJson.chats[0].details.tags, ['New Lead', 'LINE OA', 'Medical Service']);
 
-  const write = await fetch(`${baseUrl}/api/chats/1/messages`, {
+  const inactiveWrite = await fetch(`${baseUrl}/api/chats/1/messages`, {
     method: 'POST',
     headers: {
       Cookie: cookies,
       'Content-Type': 'application/json',
       'X-CSRF-Token': csrf,
     },
-    body: JSON.stringify({ text: 'Persist this in PostgreSQL', sender: 'agent', activeChatId: 1 }),
+    body: JSON.stringify({ text: 'Persist this in PostgreSQL', sender: 'agent', activeChatId: 2 }),
   });
-  assert.equal(write.status, 201);
-  const updated = await write.json();
-  assert.equal(updated.time, 'Just now');
-  assert.equal(updated.messages.at(-1).sender, 'agent');
-  assert.equal(updated.messages.at(-1).text, 'Persist this in PostgreSQL');
+  assert.equal(inactiveWrite.status, 201);
+  const inactiveUpdated = await inactiveWrite.json();
+  assert.equal(inactiveUpdated.time, 'Just now');
+  assert.equal(inactiveUpdated.unread, 0);
+  assert.equal(inactiveUpdated.messages.at(-1).sender, 'agent');
+  assert.equal(inactiveUpdated.messages.at(-1).text, 'Persist this in PostgreSQL');
+
+  const activeWrite = await fetch(`${baseUrl}/api/chats/2/messages`, {
+    method: 'POST',
+    headers: {
+      Cookie: cookies,
+      'Content-Type': 'application/json',
+      'X-CSRF-Token': csrf,
+    },
+    body: JSON.stringify({ text: 'Active chat reply', sender: 'agent', activeChatId: 2 }),
+  });
+  assert.equal(activeWrite.status, 201);
+  const activeUpdated = await activeWrite.json();
+  assert.equal(activeUpdated.time, 'Just now');
+  assert.equal(activeUpdated.unread, 0);
 
   const reread = await fetch(`${baseUrl}/api/chats`, { headers: { Cookie: cookies } });
   assert.equal(reread.status, 200);
   const rereadChats = await reread.json();
   assert.equal(rereadChats[0].messages.at(-1).text, 'Persist this in PostgreSQL');
   assert.equal(rereadChats[0].unread, 0);
+  assert.equal(rereadChats[0].time, 'Just now');
   assert.deepEqual(rereadChats[0].details.tags, ['Priority', 'Postgres']);
+  assert.equal(rereadChats[1].messages.at(-1).text, 'Active chat reply');
+  assert.equal(rereadChats[1].unread, 0);
+  assert.equal(rereadChats[1].time, 'Just now');
 
-  await new Promise(resolve => setTimeout(resolve, 1700));
+  await new Promise(resolve => setTimeout(resolve, 1800));
   const afterReply = await fetch(`${baseUrl}/api/chats`, { headers: { Cookie: cookies } });
   assert.equal(afterReply.status, 200);
   const afterReplyChats = await afterReply.json();
   assert.equal(afterReplyChats[0].messages.at(-1).sender, 'customer');
   assert.match(afterReplyChats[0].messages.at(-1).text, /thank you for writing back/i);
+  assert.equal(afterReplyChats[0].unread, 1);
+  assert.equal(afterReplyChats[0].time, 'Just now');
+  assert.equal(afterReplyChats[1].messages.at(-1).sender, 'customer');
+  assert.match(afterReplyChats[1].messages.at(-1).text, /thank you for writing back/i);
+  assert.equal(afterReplyChats[1].unread, 0);
+  assert.equal(afterReplyChats[1].time, 'Just now');
+
+  const rollbackAfterMessageActivity = await readFile(databaseFile, 'utf8');
+  assert.equal(rollbackAfterMessageActivity, rollbackAfterMetadataWrites);
 });
 
 after(async () => {
