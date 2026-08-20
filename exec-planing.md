@@ -40,6 +40,7 @@ Normalized PostgreSQL repository foundation
   -> contacts repository
   -> conversations/messages repository
   -> legacy chat compatibility mapper
+  -> bounded legacy chat request/runtime boundary
   -> RLS + tenant-scoped composite FK enforcement
 
 Live application data path today
@@ -48,7 +49,7 @@ Live application data path today
   -> serialized atomic JSON persistence
 ```
 
-PR #6 is merged to `main` with PostgreSQL schema/migrations, RLS, transaction-local tenant context, request binding, contacts/conversations repositories, and the pure legacy-chat compatibility mapping. The live Express data routes remain JSON-backed. PostgreSQL is not yet the live application store.
+PR #6 is merged to `main` with PostgreSQL schema/migrations, RLS, transaction-local tenant context, request binding, contacts/conversations repositories, and the pure legacy-chat compatibility mapping. Branch `feat/postgres-chat-runtime-boundary` now adds the smallest request-bound PostgreSQL read/write runtime over already-imported legacy thread IDs, but the live Express data routes remain JSON-backed. PostgreSQL is not yet the live application store.
 
 ## 3. Master priority queue
 
@@ -106,10 +107,12 @@ Completed with current repository evidence:
 - [x] Tenant-scoped conversations/messages repository with validated channel/direction/sender semantics.
 - [x] Real contact → conversation → message integration under PostgreSQL RLS and tenant-scoped relational integrity.
 - [x] Explicit pure compatibility mapping from legacy `/api/chats` aggregates to normalized repository inputs, with stable legacy IDs and fail-closed contract tests. Source evidence: test-first commit `26906f28c34d74077c3e496d0ddbf1ab21a080fb`, implementation `777af487395161b74fc1be472d1f5ddd448c73fb`; synchronized mapper verification is green in CI `32351874076` after lint-fix commit `42c1c4995de3f3a22d743f53dd6a630747a32884`.
+- [ ] Bounded request-bound legacy chat PostgreSQL runtime is implemented on branch `feat/postgres-chat-runtime-boundary` but remains unchecked until branch CI is green. Source commits: `d2440a7d9c6d94fb510a24c92dc68c8dd91bd8af`, `e95d2751804bed7c7a3b9ff055b5108829de8a54`, `81abadeb91261ebeb232ca71d3fed88069f40223`.
 
 Still incomplete:
 
-- [ ] Cut over a bounded Express read/write route through `withRequestTransaction` and PostgreSQL repositories with equivalent auth/CSRF/validation behavior.
+- [ ] Wire the bounded runtime into a configuration-gated Express chat read/write route with equivalent auth/CSRF/validation/API behavior and JSON rollback switch.
+- [ ] Add PostgreSQL service-backed API coverage for that Express route before widening cutover.
 - [ ] Migrate remaining live resources: campaigns, integrations, AI config, flow state.
 - [ ] Verify JSON→PostgreSQL import/cutover and rollback.
 - [ ] Verify backup/restore with recorded RPO/RTO.
@@ -137,8 +140,8 @@ CI enforces release-document presence, PostgreSQL 17 service health, real migrat
 
 Unless a security/CI defect supersedes it:
 
-1. Cut over one bounded chat read/write path through authenticated request → `withRequestTransaction` → normalized PostgreSQL repositories, preserving current security and API regression behavior, with JSON retained as an explicit rollback path.
-2. Expand chat/message cutover only after the bounded route is green; retain the rollback switch until import/cutover evidence exists.
+1. Verify the request-bound legacy chat PostgreSQL runtime branch in CI, then wire it behind one explicit configuration gate in the existing chat read/write route while preserving JSON rollback and current API/security behavior.
+2. Add PostgreSQL service-backed API tests for the gated route and expand chat/message cutover only after green evidence; retain the rollback switch until import/cutover evidence exists.
 3. Add PostgreSQL repositories for campaigns and integrations, then AI/flow state.
 4. Build and verify JSON→PostgreSQL import/cutover + rollback and backup/restore evidence.
 5. Implement production tenant-aware user identity, deny-by-default RBAC, append-only audit foundation, then shared sessions/rate-limit state.
@@ -168,16 +171,21 @@ Dependabot major-version PRs remain separate until independently compatibility-t
 
 The parent durable-data P0 item stays unchecked. Live Express data routes still use the JSON adapter. The compatibility mapper and lint repair are not a production cutover, import, rollback, backup/restore, or multi-user identity/RBAC implementation.
 
+## 9. Post-merge bounded runtime cycle
+
+**Branch:** `feat/postgres-chat-runtime-boundary`
+
+- Repository/PR inventory was refreshed first: PR #6 is merged; remaining open PRs are separate Dependabot updates and are not part of the durable-data execution track.
+- Main head at cycle start: `1f3ca916757c736fe541193eed5d5acef4aae98d`.
+- `d2440a7d9c6d94fb510a24c92dc68c8dd91bd8af` extends the normalized conversations repository with validated exact external-thread lookup and ordered message reads; tenant scope still comes exclusively from the transaction/RLS boundary.
+- `e95d2751804bed7c7a3b9ff055b5108829de8a54` adds a bounded legacy chat runtime that accepts an authenticated request, delegates through `withRequestTransaction`, resolves deterministic `legacy-chat:<id>` thread IDs, and reads/writes only through the normalized conversations repository.
+- `81abadeb91261ebeb232ca71d3fed88069f40223` adds regression coverage for tenant binding, deterministic thread lookup, read/write behavior, sender normalization, missing imports, invalid IDs/text/senders, and fail-closed missing tenant identity.
+- This slice intentionally does **not** modify `server.js`, choose PostgreSQL as the live store, import JSON data, or claim route/API parity. JSON remains the canonical live persistence and rollback path.
+- Local verification is unavailable because the execution environment cannot resolve `github.com`; branch CI is therefore the required execution evidence. Until it is green, this slice remains incomplete.
+
 ### Next safe unit
 
-Introduce one configuration-gated bounded PostgreSQL chat read/write path with API/security regression tests, authenticated request → `withRequestTransaction` → normalized repositories, and JSON retained as an explicit rollback path. Do not widen the cutover until the bounded path is green.
-
-## 9. Post-merge next unit
-
-- [x] Open PR inventory checked: PR #6 was the only open PR.
-- [x] PR #6 had no review threads, was mergeable, and its latest remote head passed CI run `32352025017`.
-- [x] PR #6 was merged to `main` as `edbc8ba85a534e49fe3881b24c8a55560671421f`.
-- [ ] Next: implement the bounded configuration-gated PostgreSQL chat read/write path, then add PostgreSQL service-backed API tests and JSON import/idempotency/rollback evidence.
+After branch CI is green, wire this runtime behind a single explicit configuration gate in the existing chat read/write route and add PostgreSQL service-backed API regression coverage before any wider cutover.
 
 ## 10. Release decision
 
