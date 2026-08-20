@@ -213,3 +213,25 @@ Unless a failing CI/security defect supersedes it, execute in this order:
 9. Product-completeness features and Gold Master polish.
 
 At the end of every cycle, synchronize `CHANGELOG.md`, this file, and `IMPLEMENTATION-CHECKLIST.md` before considering the cycle complete.
+
+---
+
+## 10. Active execution cycle — 2026-08-20 durable-storage foundation
+
+**Branch:** `feat/postgres-storage-foundation`
+**PR:** #6 (draft)
+**Selected bounded unit:** establish a tested JSON storage adapter contract before wiring the live Express request path and before adding PostgreSQL.
+
+### Evidence so far
+
+1. Added `test/storage.test.js` first.
+2. First CI run (`Zok Release Verification CI` run 32329601944) failed at `npm test` with `ERR_MODULE_NOT_FOUND` for the intentionally absent `server/storage/json-storage.js`, while the existing server hardening test passed.
+3. Added the minimal `server/storage/json-storage.js` implementation only after confirming the red test.
+4. The adapter preserves the existing local safety properties: initialization from default state, serialized mutations, atomic rename writes, temporary-file cleanup, and corrupt-state fail-closed reads.
+
+### Residual risk / incomplete scope
+
+- `server.js` still owns and uses its existing JSON persistence functions; the new adapter is not wired into the live request path yet.
+- PostgreSQL schema, migrations, adapter, transaction behavior, tenant scoping, backup/restore, and production cutover remain incomplete.
+- Therefore the parent P0 item "Replace local JSON persistence with durable PostgreSQL storage and migrations" remains unchecked.
+- The next bounded unit is to wire `server.js` to the adapter with no API behavior regression, then proceed to PostgreSQL schema/migrations.
