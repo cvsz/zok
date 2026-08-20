@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { createContactsRepository } from './contacts-repository.js';
 import { createConversationsRepository } from './conversations-repository.js';
 import { mapLegacyChatToNormalized } from './legacy-chat-mapping.js';
@@ -5,7 +6,7 @@ import { mapLegacyChatToNormalized } from './legacy-chat-mapping.js';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function sameJson(left, right) {
-  return JSON.stringify(left ?? {}) === JSON.stringify(right ?? {});
+  return isDeepStrictEqual(left ?? {}, right ?? {});
 }
 
 function prepareChats(chats) {
