@@ -8,6 +8,7 @@ import {
   rollbackTenantIsolationMigration,
 } from '../scripts/postgres-migrations.js';
 import { createPostgresPool, createPostgresStorage } from '../server/storage/postgres-storage.js';
+import { createContactsRepository } from '../server/storage/postgres/contacts-repository.js';
 
 const databaseUrl = process.env.ZOK_POSTGRES_TEST_URL;
 
@@ -43,7 +44,12 @@ test('real PostgreSQL pool enforces transaction-scoped tenant isolation', {
     const storage = createPostgresStorage({ pool });
     try {
       await storage.withTenantTransaction(tenantA, async tx => {
-        await tx.query('INSERT INTO contacts (tenant_id, name) VALUES ($1, $2)', [tenantA, 'Visible A']);
+        assert.equal(tx.tenantId, tenantA);
+        const contacts = createContactsRepository(tx);
+        const created = await contacts.create({ name: 'Visible A', email: 'A@example.test' });
+        assert.equal(created.name, 'Visible A');
+        assert.equal(created.email, 'a@example.test');
+        assert.equal((await contacts.list()).length, 1);
       });
 
       const countA = await storage.withTenantTransaction(tenantA, async tx => {
@@ -53,8 +59,9 @@ test('real PostgreSQL pool enforces transaction-scoped tenant isolation', {
       assert.equal(countA, 1);
 
       const countB = await storage.withTenantTransaction(tenantB, async tx => {
-        const result = await tx.query('SELECT count(*)::int AS count FROM contacts');
-        return result.rows[0].count;
+        assert.equal(tx.tenantId, tenantB);
+        const contacts = createContactsRepository(tx);
+        return (await contacts.list()).length;
       });
       assert.equal(countB, 0);
 
