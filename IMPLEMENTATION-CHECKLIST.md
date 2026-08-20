@@ -25,6 +25,9 @@ This checklist is the operational companion to `exec-planing.md`. Items may be c
 - [ ] PostgreSQL schema defined for tenants, users, roles, contacts, conversations, messages, campaigns, integrations, consent, sessions, and audit events.
 - [ ] Migration up/down verification added.
 - [ ] Storage abstraction introduced so JSON persistence is no longer production canonical.
+- [x] First storage-boundary slice added: tested JSON adapter contract in `server/storage/json-storage.js` with initialization, serialized concurrent updates, atomic write cleanup, and corrupt-state fail-closed coverage in `test/storage.test.js`.
+- [ ] Wire the Express request path to the storage adapter without behavior regressions.
+- [ ] Introduce PostgreSQL adapter/schema/migrations and switch production persistence away from JSON.
 - [ ] Tenant-isolation tests added.
 - [ ] Concurrent write/integrity tests added for durable storage.
 - [ ] Backup and restore procedure verified.
@@ -106,17 +109,17 @@ This checklist is the operational companion to `exec-planing.md`. Items may be c
 - [ ] Support/operator training material prepared.
 - [ ] Gold Master evidence record signed.
 
-## Every execution cycle
+## Current execution cycle — 2026-08-20 storage foundation slice
 
-- [ ] Read `exec-planing.md` before selecting work.
-- [ ] Select the highest-priority bounded incomplete item unless a blocker supersedes it.
-- [ ] Add/update tests for implementation changes.
-- [ ] Run relevant verification gates.
-- [ ] Record residual risks and environment-dependent evidence honestly.
-- [ ] Update `CHANGELOG.md`.
-- [ ] Update `exec-planing.md` when status/order/evidence changes.
-- [ ] Update `IMPLEMENTATION-CHECKLIST.md`.
-- [ ] Update README/deployment/security docs when behavior or release procedure changes.
+- [x] Read `exec-planing.md` before selecting work.
+- [x] Selected the highest-priority bounded incomplete item: durable-storage abstraction foundation.
+- [x] Added the failing storage contract test before production code; first CI run failed with `ERR_MODULE_NOT_FOUND` for the intentionally absent adapter.
+- [x] Added the minimal JSON storage adapter implementation after confirming the red test.
+- [ ] Final CI verification for the complete slice recorded.
+- [x] Residual risk recorded: `server.js` still owns the live JSON persistence path and PostgreSQL is not implemented.
+- [x] `CHANGELOG.md` updated.
+- [x] `exec-planing.md` updated for current cycle evidence/status.
+- [x] `IMPLEMENTATION-CHECKLIST.md` updated.
 
 ## Gold Master rule
 
