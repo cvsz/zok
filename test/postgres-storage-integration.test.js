@@ -17,13 +17,19 @@ test('real PostgreSQL pool enforces transaction-scoped tenant isolation', {
   const tenantA = '99999999-9999-4999-8999-999999999999';
   const tenantB = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
   const appPassword = 'zok-real-pool-password';
-  const appUrl = new URL(databaseUrl);
+  const adminUrl = new URL(databaseUrl);
+  adminUrl.pathname = '/postgres';
+  const isolatedUrl = new URL(databaseUrl);
+  isolatedUrl.pathname = '/zok_pool_integration_test';
+  const appUrl = new URL(isolatedUrl);
   appUrl.username = 'zok_real_pool_test';
   appUrl.password = appPassword;
 
-  await applyInitialMigration(databaseUrl);
+  await executeSql(adminUrl.toString(), 'DROP DATABASE IF EXISTS zok_pool_integration_test WITH (FORCE);');
+  await executeSql(adminUrl.toString(), 'CREATE DATABASE zok_pool_integration_test;');
+  await applyInitialMigration(isolatedUrl.toString());
   try {
-    await executeSql(databaseUrl, `
+    await executeSql(isolatedUrl.toString(), `
       INSERT INTO tenants (id, slug, name) VALUES
         ('${tenantA}', 'real-pool-a', 'Real Pool A'),
         ('${tenantB}', 'real-pool-b', 'Real Pool B');
@@ -31,7 +37,7 @@ test('real PostgreSQL pool enforces transaction-scoped tenant isolation', {
       GRANT USAGE ON SCHEMA public TO zok_real_pool_test;
       GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO zok_real_pool_test;
     `);
-    await applyTenantIsolationMigration(databaseUrl);
+    await applyTenantIsolationMigration(isolatedUrl.toString());
 
     const pool = createPostgresPool({ connectionString: appUrl.toString(), max: 2 });
     const storage = createPostgresStorage({ pool });
@@ -61,8 +67,9 @@ test('real PostgreSQL pool enforces transaction-scoped tenant isolation', {
       await storage.close();
     }
   } finally {
-    await rollbackTenantIsolationMigration(databaseUrl).catch(() => undefined);
-    await rollbackInitialMigration(databaseUrl).catch(() => undefined);
-    await executeSql(databaseUrl, 'DROP ROLE IF EXISTS zok_real_pool_test;').catch(() => undefined);
+    await rollbackTenantIsolationMigration(isolatedUrl.toString()).catch(() => undefined);
+    await rollbackInitialMigration(isolatedUrl.toString()).catch(() => undefined);
+    await executeSql(adminUrl.toString(), 'DROP DATABASE IF EXISTS zok_pool_integration_test WITH (FORCE);').catch(() => undefined);
+    await executeSql(adminUrl.toString(), 'DROP ROLE IF EXISTS zok_real_pool_test;').catch(() => undefined);
   }
 });
