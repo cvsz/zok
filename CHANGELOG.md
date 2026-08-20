@@ -10,11 +10,14 @@ The format follows Keep a Changelog principles and uses calendar dates while the
 - `IMPLEMENTATION-CHECKLIST.md` as the evidence-based operational release checklist.
 - Explicit P0-P3 execution priorities and Gold Master blockers in `exec-planing.md`.
 - Release-control synchronization rule requiring `CHANGELOG.md`, `exec-planing.md`, and `IMPLEMENTATION-CHECKLIST.md` to be updated together after each execution cycle.
+- `server/storage/json-storage.js` as the first storage-boundary slice, exposing a tested JSON adapter contract for `read()` and serialized `update()` operations.
+- `test/storage.test.js` covering initialization, concurrent mutation serialization, atomic temporary-file cleanup, and corrupt-state fail-closed behavior.
 
 ### Changed
 - Refreshed `exec-planing.md` into the canonical master execution ledger for the current Vite + React + Express architecture.
 - Clarified that UI simulations, demo metrics, mock integrations, and local AI behavior are not production evidence.
 - Defined verification Gates A-D covering dependencies, tests/static checks, production-shaped runtime smoke, and external enterprise release evidence.
+- Began P0 durable-storage work with an isolated adapter contract; the Express request path is not yet switched to that adapter and PostgreSQL remains unimplemented.
 
 ### Release status
 - FOUNDATION HARDENED / NOT GOLD MASTER.
