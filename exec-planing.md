@@ -1,57 +1,61 @@
 # Zok Master Execution Plan
 
-**Status:** Active release-control ledger
-**Last updated:** 2026-08-20
-**Canonical branch:** `main`
-**Canonical runtime:** Vite + React frontend with Express API adapter
+**Status:** Active release-control ledger  
+**Last updated:** 2026-08-20  
+**Canonical branch:** `main`  
+**Active implementation branch:** `feat/postgres-storage-foundation` / PR #6  
+**Canonical runtime:** Vite + React frontend with Express API adapter  
 **Release state:** FOUNDATION HARDENED / NOT GOLD MASTER
 
-This file is the canonical execution source for release work. Every implementation cycle must select the highest-priority incomplete item, produce verifiable evidence, and update this file together with `IMPLEMENTATION-CHECKLIST.md` and `CHANGELOG.md`.
+This file is the canonical execution source for release work. Every cycle selects the highest-priority incomplete unit that can be implemented and verified safely, records exact evidence, and synchronizes this file with `IMPLEMENTATION-CHECKLIST.md` and `CHANGELOG.md`.
 
----
+## 1. Release objective and rules
 
-## 1. Release Objective
+Deliver Zok as a production-ready conversational-commerce platform without treating UI simulations, mock integrations, demo AI behavior, static metrics, or local-only persistence as production capability.
 
-Deliver Zok as a production-ready conversational-commerce platform without representing UI simulations as completed backend capability. Release claims must be backed by tests, runtime evidence, security controls, operational readiness, and current documentation.
+1. No item is complete without current evidence.
+2. Security/release gates are not weakened to make a change pass.
+3. Code-changing cycles add/update tests and run relevant gates.
+4. Completed cycles synchronize `CHANGELOG.md`, `exec-planing.md`, and `IMPLEMENTATION-CHECKLIST.md`.
+5. Broader phases remain incomplete when only a bounded subset is verified.
 
-### Non-negotiable rules
-
-1. No unchecked implementation item may be reported as complete without evidence.
-2. No mock integration, static metric, demo AI behavior, or UI-only control counts as a production capability.
-3. Every code-changing execution cycle must run the relevant verification gate before marking work complete.
-4. Every completed execution cycle must update:
-   - `CHANGELOG.md`
-   - `exec-planing.md`
-   - `IMPLEMENTATION-CHECKLIST.md`
-5. Any release-impacting architecture or security change must also update the relevant README/deployment/security documentation.
-
----
-
-## 2. Current Architecture Baseline
+## 2. Current architecture baseline
 
 ```text
 Browser
   -> Vite/React client
-  -> src/lib/api.js
-  -> Express API adapter (loopback)
-  -> auth/session/origin/CSRF/rate-limit/validation middleware
-  -> serialized atomic JSON storage adapter
+  -> Express API adapter
+  -> authenticated session principal
+       -> validated configured tenantId
+  -> request-to-transaction binding helper
+  -> PostgreSQL storage transaction boundary
+       -> real pg.Pool
+       -> BEGIN
+       -> transaction-local app.tenant_id
+       -> normalized repositories receive verified tx.tenantId
+       -> COMMIT / ROLLBACK
+       -> guaranteed client release
+
+Normalized PostgreSQL repository foundation
+  -> contacts repository
+  -> conversations/messages repository
+  -> legacy chat compatibility mapper
+  -> RLS + tenant-scoped composite FK enforcement
+
+Live application data path today
+  -> explicit storage boundary
+  -> createJsonStorage
+  -> serialized atomic JSON persistence
 ```
 
-Current repository evidence already supports a hardened sandbox foundation: authenticated request paths, CSRF/origin protection, security headers, rate limiting, atomic JSON writes, health checks, lint/typecheck/build/test gates, and production dependency audit.
+The PostgreSQL driver, synchronized npm lockfile, real pool, transaction-local tenant context, request binding, contacts repository, conversations/messages repository, and pure legacy-chat compatibility mapping now exist on the implementation branch. The live Express data routes remain JSON-backed. PostgreSQL is not yet the live application store.
 
-The current architecture is not yet horizontally scalable, multi-tenant, provider-integrated, or enterprise-governed.
-
----
-
-## 3. Master Priority Queue
-
-Execution must proceed from P0 to P3 unless a blocking defect requires immediate priority escalation.
+## 3. Master priority queue
 
 ### P0 — Gold-Master blockers
 
-- [ ] Replace local JSON persistence with durable PostgreSQL storage and migrations.
-- [ ] Introduce tenant-aware identity and deny-by-default RBAC.
+- [ ] Replace local JSON persistence with durable PostgreSQL application runtime storage and verified cutover/rollback.
+- [ ] Introduce production tenant-aware application identity and deny-by-default RBAC.
 - [ ] Persist append-only audit events for privileged and data-changing actions.
 - [ ] Move sessions and rate-limit state to shared production-capable storage.
 - [ ] Define provider-neutral channel event contracts.
@@ -62,154 +66,114 @@ Execution must proceed from P0 to P3 unless a blocking defect requires immediate
 - [ ] Complete independent security review, load test, backup/restore drill, privacy review, and release sign-off.
 
 ### P1 — Production capability
-
-- [ ] Implement real channel adapters for the channels that are publicly claimed.
-- [ ] Implement durable campaigns/broadcast workers.
-- [ ] Implement multi-touch event schema and attribution reconciliation.
-- [ ] Implement migration import with dry-run, idempotency, resumability, and rollback.
-- [ ] Implement POS/e-commerce provider adapters with replay-safe contracts.
-- [ ] Add metrics, traces, structured logs, SLOs, alerts, and incident runbooks.
-- [ ] Add tenant-scoped API keys, rotation, revocation, and secrets handling.
-- [ ] Add export/delete/retention workflows for privacy obligations.
+- [ ] Real publicly claimed channel adapters and durable campaign workers.
+- [ ] Multi-touch attribution and reconciliation.
+- [ ] Migration import with dry-run/idempotency/resumability/rollback.
+- [ ] Replay-safe POS/e-commerce adapters.
+- [ ] Metrics, traces, structured logs, SLOs, alerts, incident runbooks.
+- [ ] Tenant-scoped API keys, rotation, revocation, secrets handling.
+- [ ] Export/delete/retention privacy workflows.
 
 ### P2 — Product completeness
-
-- [ ] Persist onboarding/setup wizard state.
-- [ ] Implement Academy enrollment/completion/certificate verification.
-- [ ] Implement marketplace ownership, publishing, moderation, and versioning.
-- [ ] Add production-backed analytics and operational reporting.
-- [ ] Replace remaining UI-only simulations with explicit sandbox labeling or real services.
-- [ ] Split oversized frontend bundles and enforce performance budgets.
+- [ ] Persist onboarding/setup state.
+- [ ] Academy enrollment/completion/certificate verification.
+- [ ] Marketplace ownership/publishing/moderation/versioning.
+- [ ] Production-backed analytics/reporting.
+- [ ] Replace or explicitly label remaining UI simulations.
+- [ ] Frontend code splitting/performance budgets.
 
 ### P3 — Release polish
-
-- [ ] Accessibility audit and remediation.
-- [ ] Cross-browser/device regression suite.
-- [ ] Final documentation consistency audit.
-- [ ] Release notes and migration notes.
-- [ ] Support/operator training material.
+- [ ] Accessibility and cross-browser/device regression.
+- [ ] Documentation consistency audit.
+- [ ] Release/migration notes and operator training.
 - [ ] Signed Gold Master evidence record.
 
----
+## 4. Durable-data progress
 
-## 4. Execution Protocol
+Completed with current repository evidence:
 
-For each execution cycle:
+- [x] JSON adapter with serialized atomic writes and corrupt-state fail-closed behavior.
+- [x] Express request path wired through an explicit storage boundary.
+- [x] Initial PostgreSQL multi-tenant schema and rollback DDL.
+- [x] Real PostgreSQL migration up/down/replay verification.
+- [x] Forced RLS and non-superuser/NOBYPASSRLS negative tests.
+- [x] Tenant-scoped composite foreign keys.
+- [x] Concurrent uniqueness/integrity verification.
+- [x] PostgreSQL transaction adapter with real `pg.Pool`, explicit transactions, and transaction-local tenant context.
+- [x] Authenticated identity and request-to-transaction fail-closed binding.
+- [x] Transaction context exposes the verified tenant ID to repository code rather than accepting repository-level tenant overrides.
+- [x] Tenant-scoped contacts repository with validation and real PostgreSQL coverage.
+- [x] Tenant-scoped conversations/messages repository with validated channel/direction/sender semantics.
+- [x] Real contact → conversation → message integration under PostgreSQL RLS and tenant-scoped relational integrity.
+- [x] Explicit pure compatibility mapping from legacy `/api/chats` aggregates to normalized repository inputs, with stable legacy IDs and fail-closed contract tests. Source evidence: test-first commit `26906f28c34d74077c3e496d0ddbf1ab21a080fb`, implementation `777af487395161b74fc1be472d1f5ddd448c73fb`; synchronized mapper verification is green in CI `32351874076` after lint-fix commit `42c1c4995de3f3a22d743f53dd6a630747a32884`.
 
-1. Read `exec-planing.md`, `IMPLEMENTATION-CHECKLIST.md`, and the latest `CHANGELOG.md` entry.
-2. Inspect current code and CI before choosing work.
-3. Select one coherent highest-priority incomplete unit that can be completed and verified safely.
-4. Implement only that bounded unit and its tests/docs.
-5. Run relevant gates.
-6. Record exact evidence and residual risk.
-7. Update all three release-control documents in the same change set.
-8. Do not mark a broader phase complete when only a subset is verified.
+Still incomplete:
 
-### Completion evidence format
+- [ ] Cut over a bounded Express read/write route through `withRequestTransaction` and PostgreSQL repositories with equivalent auth/CSRF/validation behavior.
+- [ ] Migrate remaining live resources: campaigns, integrations, AI config, flow state.
+- [ ] Verify JSON→PostgreSQL import/cutover and rollback.
+- [ ] Verify backup/restore with recorded RPO/RTO.
+- [ ] Replace the bounded configured-admin tenant model with production user/tenant/role resolution and deny-by-default RBAC.
 
-Every completed checklist item should have enough information to answer:
+## 5. Verification gates
 
-- What changed?
-- Which files/components enforce it?
-- What test or runtime command verifies it?
-- What remains outside the repository or environment?
+### Gate A
+`npm ci` and `npm audit --omit=dev --audit-level=high` — reproducible install and no unresolved production high/critical vulnerability.
 
----
+### Gate B
+`npm test`, `npm run lint`, `npm run typecheck` — security-sensitive negative cases fail closed and static gates remain green.
 
-## 5. Verification Gates
+### Gate C
+`npm run build`, production start/health, and deployment-environment TLS/secure-cookie checks.
 
-### Gate A — Dependency and repository integrity
+### Gate D
+Tenant/RBAC security review, provider replay/contract evidence, AI evaluations, penetration test/remediation, load/capacity evidence, backup restore drill/RPO/RTO, privacy lifecycle evidence, canary/rollback proof, operational sign-off.
 
-```bash
-npm ci
-npm audit --omit=dev --audit-level=high
-```
+## 6. Current CI target state
 
-Required: reproducible install; no unresolved production high/critical vulnerability; no committed secrets/runtime DB/build output.
+CI enforces release-document presence, PostgreSQL 17 service health, real migrations, pool/RLS and normalized repository integration, `npm ci`, tests, lint, typecheck, build, production dependency audit, least-privilege permissions, and concurrency cancellation. Workflow failures remain release blockers until triaged.
 
-### Gate B — Static and automated verification
+## 7. Execution order from current head
 
-```bash
-npm test
-npm run lint
-npm run typecheck
-```
+Unless a security/CI defect supersedes it:
 
-Required: tests pass; no lint errors; typecheck passes; security-sensitive negative cases fail closed.
+1. Cut over one bounded chat read/write path through authenticated request → `withRequestTransaction` → normalized PostgreSQL repositories, preserving current security and API regression behavior, with JSON retained as an explicit rollback path.
+2. Expand chat/message cutover only after the bounded route is green; retain the rollback switch until import/cutover evidence exists.
+3. Add PostgreSQL repositories for campaigns and integrations, then AI/flow state.
+4. Build and verify JSON→PostgreSQL import/cutover + rollback and backup/restore evidence.
+5. Implement production tenant-aware user identity, deny-by-default RBAC, append-only audit foundation, then shared sessions/rate-limit state.
+6. Provider-neutral event + queue/retry/idempotency base and first channel adapter/consent enforcement.
+7. AI policy/evaluation service, privacy lifecycle, observability/load/DR/security exercises.
+8. Product completeness and Gold Master polish.
 
-### Gate C — Build and production-shaped smoke
+Dependabot major-version PRs remain separate until independently compatibility-tested.
 
-```bash
-npm run build
-NODE_ENV=production npm start
-curl -fsS http://127.0.0.1:3005/api/health
-```
+## 8. Current execution evidence — 2026-08-20 legacy chat compatibility mapping CI repair
 
-Required: successful build/start/health; API remains loopback-only when deployed behind the edge; HTTPS and secure-cookie behavior verified in the deployment environment.
+**Branch:** `feat/postgres-storage-foundation`  
+**PR:** #6 (draft)
 
-### Gate D — Enterprise release evidence
+- Existing PR #6 was reused; no duplicate implementation PR was created and no merge was performed.
+- Test-first commit `26906f28c34d74077c3e496d0ddbf1ab21a080fb` defines the compatibility contract before any live route change.
+- Implementation commit `777af487395161b74fc1be472d1f5ddd448c73fb` adds a pure mapper only; it does not alter Express persistence.
+- Stable compatibility keys are `legacy-chat:<id>` for contact/thread identity and `legacy-chat:<id>:message:<index>` for legacy messages.
+- Customer→inbound and agent→outbound semantics are explicit. Unsupported channels/senders and malformed IDs/text/tags fail closed.
+- Display-only legacy time strings are retained as metadata rather than converted into fabricated timestamps.
+- CI `32346860728` reached the new mapper slice and passed PostgreSQL service health, release-document checks, `npm ci`, and all 24 tests, then failed at lint because `test/legacy-chat-mapping.test.js` referenced `structuredClone` while the repository ESLint environment did not declare that global.
+- Fix commit `42c1c4995de3f3a22d743f53dd6a630747a32884` replaced only the test-fixture clone with JSON round-trip cloning; production mapper behavior and route boundaries were unchanged.
+- CI `32351874076` then passed release-document checks, PostgreSQL service health, `npm ci`, all 24 tests, lint, typecheck, build, and production dependency audit.
+- Local clone verification was attempted but the execution container could not resolve `github.com`; this did not replace CI evidence and no local-pass claim is made.
 
-Required before Gold Master:
+### Residual boundary
 
-- tenant-isolation and RBAC security review;
-- provider contract/replay tests for each claimed integration;
-- AI evaluation and guardrail evidence;
-- penetration test and remediation record;
-- load/capacity test against agreed SLOs;
-- backup restore drill and documented RPO/RTO;
-- privacy/data lifecycle evidence;
-- monitored canary, rollback proof, and operational sign-off.
+The parent durable-data P0 item stays unchecked. Live Express data routes still use the JSON adapter. The compatibility mapper and lint repair are not a production cutover, import, rollback, backup/restore, or multi-user identity/RBAC implementation.
 
----
+### Next safe unit
 
-## 6. CI / Workflow Target State
+Introduce one configuration-gated bounded PostgreSQL chat read/write path with API/security regression tests, authenticated request → `withRequestTransaction` → normalized repositories, and JSON retained as an explicit rollback path. Do not widen the cutover until the bounded path is green.
 
-GitHub Actions should enforce, at minimum:
+## 9. Release decision
 
-- clean dependency installation;
-- test, lint, typecheck, production build;
-- production dependency audit;
-- documentation/release-control presence checks;
-- dependency updates through GitHub-native automation where appropriate;
-- least-privilege permissions and concurrency cancellation;
-- workflow versions pinned to supported major releases.
+**FOUNDATION HARDENED / NOT GOLD MASTER.**
 
-Workflow failures are release blockers until triaged and recorded.
-
----
-
-## 7. GitHub Documentation and Template Target State
-
-Repository collaboration metadata must remain aligned with the release process:
-
-- PR template requires verification and release-document synchronization.
-- Bug template captures reproducibility, severity, regression, environment, and security impact.
-- Feature template captures problem, scope, acceptance criteria, architecture/security/data impacts, and evidence expectations.
-- Security-sensitive findings must not be pasted into public issue bodies when disclosure should be private.
-- Contributor docs must point to the canonical execution/checklist/release gates.
-
----
-
-## 8. Current Release Decision
-
-The current codebase has a hardened sandbox/developer foundation, but enterprise platform requirements remain incomplete. Gold Master promotion is forbidden until every P0 blocker is completed with current evidence and Gate D is signed off.
-
-**Current verdict:** FOUNDATION HARDENED / NOT GOLD MASTER.
-
----
-
-## 9. Next Execution Order
-
-Unless a failing CI/security defect supersedes it, execute in this order:
-
-1. Durable PostgreSQL data model + migrations + storage abstraction.
-2. Tenant identity/RBAC + audit event foundation.
-3. Shared session/rate-limit state.
-4. Provider-neutral event contract + queue/retry/idempotency base.
-5. First verified channel adapter.
-6. AI policy/evaluation service.
-7. Privacy lifecycle + migration/attribution/POS capability.
-8. Observability, load/DR/security exercises.
-9. Product-completeness features and Gold Master polish.
-
-At the end of every cycle, synchronize `CHANGELOG.md`, this file, and `IMPLEMENTATION-CHECKLIST.md` before considering the cycle complete.
+Gold Master promotion remains forbidden until every P0 blocker has current evidence and Gate D is signed off.

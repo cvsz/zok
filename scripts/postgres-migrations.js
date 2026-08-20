@@ -1,0 +1,85 @@
+import { execFile } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const migrationDirectory = path.resolve(
+  __dirname,
+  '../server/storage/postgres/migrations',
+);
+
+async function runPsql(databaseUrl, args) {
+  if (!databaseUrl || typeof databaseUrl !== 'string') {
+    throw new Error('PostgreSQL database URL is required');
+  }
+
+  const { stdout } = await execFileAsync(
+    'psql',
+    [databaseUrl, '--no-psqlrc', '--set', 'ON_ERROR_STOP=1', ...args],
+    {
+      encoding: 'utf8',
+      maxBuffer: 2 * 1024 * 1024,
+    },
+  );
+  return stdout;
+}
+
+async function executeMigrationFile(databaseUrl, fileName) {
+  const migrationPath = path.join(migrationDirectory, fileName);
+  await runPsql(databaseUrl, ['--single-transaction', '--file', migrationPath]);
+}
+
+export async function applyInitialMigration(databaseUrl) {
+  await executeMigrationFile(databaseUrl, '001_initial.up.sql');
+}
+
+export async function rollbackInitialMigration(databaseUrl) {
+  await executeMigrationFile(databaseUrl, '001_initial.down.sql');
+}
+
+export async function applyTenantIsolationMigration(databaseUrl) {
+  await executeMigrationFile(databaseUrl, '002_tenant_rls.up.sql');
+}
+
+export async function rollbackTenantIsolationMigration(databaseUrl) {
+  await executeMigrationFile(databaseUrl, '002_tenant_rls.down.sql');
+}
+
+export async function applyRelationalIntegrityMigration(databaseUrl) {
+  await executeMigrationFile(databaseUrl, '003_tenant_relational_integrity.up.sql');
+}
+
+export async function rollbackRelationalIntegrityMigration(databaseUrl) {
+  await executeMigrationFile(databaseUrl, '003_tenant_relational_integrity.down.sql');
+}
+
+export async function executeSql(databaseUrl, sql) {
+  await runPsql(databaseUrl, ['--quiet', '--command', sql]);
+}
+
+export async function queryScalar(databaseUrl, sql) {
+  const stdout = await runPsql(databaseUrl, [
+    '--quiet',
+    '--tuples-only',
+    '--no-align',
+    '--command',
+    sql,
+  ]);
+  return stdout.trim();
+}
+
+export async function listPublicTables(databaseUrl) {
+  const stdout = await runPsql(databaseUrl, [
+    '--tuples-only',
+    '--no-align',
+    '--command',
+    "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'public' ORDER BY tablename;",
+  ]);
+
+  return stdout
+    .split('\n')
+    .map(value => value.trim())
+    .filter(Boolean);
+}

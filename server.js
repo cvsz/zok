@@ -1,6 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -8,6 +7,7 @@ import {
   randomBytes,
   timingSafeEqual,
 } from 'node:crypto';
+import { createJsonStorage } from './server/storage/json-storage.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,6 +17,7 @@ const PORT = process.env.PORT || 3005;
 const DB_FILE = process.env.ZOK_DB_FILE || path.join(__dirname, 'server', 'db.json');
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const IS_PRODUCTION = NODE_ENV === 'production';
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function boundedInteger(value, fallback, minimum, maximum) {
   const parsed = Number(value);
@@ -33,6 +34,10 @@ const SESSION_TTL_MS = boundedInteger(
 );
 const ADMIN_EMAIL = (process.env.ZOK_ADMIN_EMAIL || '').trim().toLowerCase();
 const ADMIN_PASSWORD_HASH = process.env.ZOK_ADMIN_PASSWORD_HASH || '';
+const ADMIN_TENANT_ID = (process.env.ZOK_ADMIN_TENANT_ID || '').trim();
+if (ADMIN_TENANT_ID && !UUID_PATTERN.test(ADMIN_TENANT_ID)) {
+  throw new Error('ZOK_ADMIN_TENANT_ID must be a UUID');
+}
 const AUTH_CONFIGURED = Boolean(ADMIN_EMAIL && ADMIN_PASSWORD_HASH);
 const DEFAULT_ALLOWED_ORIGINS = IS_PRODUCTION
   ? ['https://zok.zeaz.dev']
@@ -279,7 +284,6 @@ app.use(express.json({ limit: '64kb' }));
 app.use('/api', requireAuth);
 app.use('/api', requireCsrf);
 
-// Default database state
 const DEFAULT_DB = {
   chats: [
     {
@@ -521,24 +525,6 @@ const DEFAULT_DB = {
   ]
 };
 
-// The JSON store is only a local/demo adapter. Keep its writes serialized and atomic
-// so concurrent dashboard actions cannot truncate or silently overwrite the file.
-let dbReady;
-let mutationQueue = Promise.resolve();
-
-async function atomicWrite(data) {
-  await fs.mkdir(path.dirname(DB_FILE), { recursive: true });
-  const temporaryFile = `${DB_FILE}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`;
-  let renamed = false;
-  try {
-    await fs.writeFile(temporaryFile, JSON.stringify(data, null, 2), { encoding: 'utf-8', mode: 0o600 });
-    await fs.rename(temporaryFile, DB_FILE);
-    renamed = true;
-  } finally {
-    if (!renamed) await fs.rm(temporaryFile, { force: true }).catch(() => undefined);
-  }
-}
-
 function validateDatabase(data) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     throw new Error('Database is unavailable');
@@ -568,41 +554,18 @@ function validateDatabase(data) {
   return data;
 }
 
-async function ensureDB() {
-  if (!dbReady) {
-    dbReady = (async () => {
-      try {
-        await fs.access(DB_FILE);
-      } catch (error) {
-        if (error.code !== 'ENOENT') throw error;
-        await atomicWrite(DEFAULT_DB);
-      }
-    })();
-  }
-  return dbReady;
-}
+const storage = createJsonStorage({
+  filePath: DB_FILE,
+  defaultData: DEFAULT_DB,
+  validate: validateDatabase,
+});
 
 async function readDB() {
-  await ensureDB();
-  const data = await fs.readFile(DB_FILE, 'utf-8');
-  try {
-    return validateDatabase(JSON.parse(data));
-  } catch (error) {
-    console.error('Database state is invalid; refusing to overwrite it:', error.message);
-    throw new Error('Database is unavailable');
-  }
+  return storage.read();
 }
 
 function updateDB(mutator) {
-  const operation = mutationQueue.then(async () => {
-    const db = await readDB();
-    const result = await mutator(db);
-    await atomicWrite(db);
-    return result;
-  });
-
-  mutationQueue = operation.catch(() => undefined);
-  return operation;
+  return storage.update(mutator);
 }
 
 app.get('/api/health', async (_req, res) => {
@@ -641,7 +604,11 @@ app.post('/api/auth/login', rateLimit({ windowMs: 15 * 60_000, max: 10 }), (req,
     token,
     csrfToken: randomBytes(32).toString('base64url'),
     expiresAt: Date.now() + SESSION_TTL_MS,
-    user: { email, role: 'owner' },
+    user: {
+      email,
+      role: 'owner',
+      ...(ADMIN_TENANT_ID ? { tenantId: ADMIN_TENANT_ID } : {}),
+    },
   };
   sessions.set(token, session);
   setAuthCookies(res, session);
@@ -658,19 +625,16 @@ app.post('/api/auth/logout', (req, res) => {
   return res.status(204).end();
 });
 
-// 1. GET Full State
 app.get('/api/db', async (req, res) => {
   const db = await readDB();
   res.json(db);
 });
 
-// 2. GET Chats
 app.get('/api/chats', async (req, res) => {
   const db = await readDB();
   res.json(db.chats);
 });
 
-// 3. POST Message to Chat (and trigger mock automated customer reply)
 app.post('/api/chats/:id/messages', async (req, res) => {
   const chatId = parseChatId(req.params.id);
   const textResult = requiredText(req.body?.text, 'Text content');
@@ -699,12 +663,11 @@ app.post('/api/chats/:id/messages', async (req, res) => {
   if (!updatedChat) return res.status(404).json({ error: 'Chat not found' });
   res.status(201).json(updatedChat);
 
-  // 2. Schedule automated client response (simulating webhook latency)
   setTimeout(async () => {
     try {
       let responseText = `Hi, thank you for writing back! I am currently away but our team will update you as soon as possible.`;
       const lowercaseText = textResult.value.toLowerCase();
-      
+
       if (lowercaseText.includes('help') || lowercaseText.includes('support')) {
         responseText = `Got it. I've routed this conversation to our priority support desk. Alex Rivera will review this shortly!`;
       } else if (lowercaseText.includes('order') || lowercaseText.includes('track')) {
@@ -723,8 +686,6 @@ app.post('/api/chats/:id/messages', async (req, res) => {
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         });
         liveDb.chats[liveChatIndex].time = 'Just now';
-
-        // If user switched away, increment unread badge counter.
         liveDb.chats[liveChatIndex].unread = chatId !== activeChatId
           ? (liveDb.chats[liveChatIndex].unread || 0) + 1
           : 0;
@@ -735,7 +696,6 @@ app.post('/api/chats/:id/messages', async (req, res) => {
   }, 1500);
 });
 
-// 4. POST Reset Unread count
 app.post('/api/chats/:id/read', async (req, res) => {
   const chatId = parseChatId(req.params.id);
   if (chatId === null) return res.status(400).json({ error: 'Chat id must be a positive integer' });
@@ -751,7 +711,6 @@ app.post('/api/chats/:id/read', async (req, res) => {
   return res.status(404).json({ error: 'Chat not found' });
 });
 
-// 5. POST Tags update
 app.post('/api/chats/:id/tags', async (req, res) => {
   const chatId = parseChatId(req.params.id);
   const { tags } = req.body || {};
@@ -771,7 +730,6 @@ app.post('/api/chats/:id/tags', async (req, res) => {
   return res.status(404).json({ error: 'Chat not found' });
 });
 
-// 6. GET/POST AI Config
 app.get('/api/ai-config', async (req, res) => {
   const db = await readDB();
   res.json(db.aiConfig);
@@ -808,7 +766,6 @@ app.post('/api/ai-config', async (req, res) => {
   return res.json(savedConfig);
 });
 
-// 7. GET/POST Flow Nodes
 app.get('/api/flow-nodes', async (req, res) => {
   const db = await readDB();
   res.json(db.flowNodes);
@@ -826,7 +783,6 @@ app.post('/api/flow-nodes', async (req, res) => {
   return res.json(savedNodes);
 });
 
-// 8. GET/POST Campaigns (Broadcasts)
 app.get('/api/campaigns', async (req, res) => {
   const db = await readDB();
   res.json(db.campaigns);
@@ -862,7 +818,6 @@ app.post('/api/campaigns', async (req, res) => {
   return res.status(201).json(newCamp);
 });
 
-// 9. GET/POST Integrations
 app.get('/api/integrations', async (req, res) => {
   const db = await readDB();
   res.json({ integrations: db.integrations, syncLogs: db.syncLogs });
