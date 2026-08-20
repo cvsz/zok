@@ -18,9 +18,10 @@ The format follows Keep a Changelog principles and uses calendar dates while the
 - Validated `ZOK_ADMIN_TENANT_ID` propagation into the bounded configured-admin principal.
 - `server/storage/request-transaction.js` as a fail-closed request-principal → PostgreSQL transaction boundary.
 - `server/storage/postgres/contacts-repository.js` for tenant-scoped normalized contact reads/creates with validation.
-- `server/storage/postgres/conversations-repository.js` for tenant-scoped conversation creation, message insertion, and conversation listing with validated channel/direction/sender semantics.
+- `server/storage/postgres/conversations-repository.js` for tenant-scoped conversation creation, message insertion, conversation listing, stable external-thread lookup, and ordered message reads with validated channel/direction/sender semantics.
 - Real PostgreSQL relational repository integration proving contact → conversation → message writes, tenant isolation, and cross-tenant relationship rejection.
 - Pure legacy-chat compatibility mapper with deterministic `legacy-chat:<id>` contact/thread IDs and indexed message IDs, explicit sender/direction mapping, metadata preservation, and fail-closed validation.
+- `server/storage/postgres/legacy-chat-runtime.js` as a bounded authenticated request → tenant transaction → normalized conversations repository read/write boundary for already-imported legacy chat threads; live Express routes are not switched by this slice.
 
 ### Changed
 - `server.js` delegates filesystem persistence to `createJsonStorage` rather than owning JSON write internals.
@@ -28,6 +29,7 @@ The format follows Keep a Changelog principles and uses calendar dates while the
 - Durable-data execution now requires incremental normalized repository and route cutover rather than a monolithic JSON-in-PostgreSQL compatibility shortcut.
 - Legacy display-only message times are preserved as metadata rather than being invented as database timestamps during compatibility mapping.
 - Legacy mapper determinism regression coverage now clones the JSON-compatible fixture with JSON round-trip semantics so the existing ESLint environment remains green without widening globals.
+- The bounded legacy runtime maps existing API sender semantics `customer` → inbound/customer, `agent` → outbound/agent, `bot` → outbound/ai, and `system` → outbound/system while rejecting invalid tenant identity, IDs, empty/oversized text, and unsupported senders before persistence.
 
 ### Verification evidence
 - JSON adapter red `32329601944`; subsequent adapter green.
@@ -46,14 +48,16 @@ The format follows Keep a Changelog principles and uses calendar dates while the
 - Real normalized relational repository integration green `32346343315`.
 - Legacy compatibility mapping contract added test-first in commit `26906f28c34d74077c3e496d0ddbf1ab21a080fb`; implementation commit `777af487395161b74fc1be472d1f5ddd448c73fb`.
 - Synchronized mapper head CI `32346860728` exposed one ESLint `no-undef` regression for `structuredClone` after all 24 tests passed. Fix commit `42c1c4995de3f3a22d743f53dd6a630747a32884` replaced it with a JSON-compatible clone; CI `32351874076` then passed release-document checks, PostgreSQL service health, `npm ci`, all 24 tests, lint, typecheck, build, and production dependency audit.
+- Bounded post-merge runtime commits: conversation lookup/read primitives `d2440a7d9c6d94fb510a24c92dc68c8dd91bd8af`, request-bound runtime `e95d2751804bed7c7a3b9ff055b5108829de8a54`, and regression coverage `81abadeb91261ebeb232ca71d3fed88069f40223`. CI evidence for this new branch is required before the slice is considered verified.
 
 ### Post-merge execution
-- PR #6 was the only open PR and was squash-merged to `main` as `edbc8ba85a534e49fe3881b24c8a55560671421f` after green CI `32352025017`.
-- The merged foundation remains intentionally not Gold Master; bounded route cutover, import/rollback, backup/restore, production RBAC, and Gate D evidence remain incomplete.
+- PR #6 was the only open implementation PR and was squash-merged to `main` as `edbc8ba85a534e49fe3881b24c8a55560671421f` after green CI `32352025017`.
+- The merged foundation remains intentionally not Gold Master; bounded Express route cutover, import/rollback, backup/restore, production RBAC, and Gate D evidence remain incomplete.
+- New branch `feat/postgres-chat-runtime-boundary` prepares the smallest request-bound PostgreSQL read/write runtime needed before touching live chat routes; JSON remains the canonical live store and explicit rollback path.
 
 ### Release status
 - FOUNDATION HARDENED / NOT GOLD MASTER.
-- Live Express data routes remain JSON-backed. Legacy chat mapping is now explicit, contract-tested, and CI-green, but route cutover, JSON→PostgreSQL migration/rollback, backup/restore, production multi-user tenant identity/RBAC, shared session/rate-limit state, and remaining Gate D evidence remain incomplete.
+- Live Express data routes remain JSON-backed. The request-bound PostgreSQL legacy runtime is not a route cutover, import, rollback, backup/restore, production multi-user tenant identity/RBAC, shared session/rate-limit state, or Gate D completion claim.
 
 ## [2026-08-10]
 
