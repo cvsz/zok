@@ -17,6 +17,7 @@ const PORT = process.env.PORT || 3005;
 const DB_FILE = process.env.ZOK_DB_FILE || path.join(__dirname, 'server', 'db.json');
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const IS_PRODUCTION = NODE_ENV === 'production';
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function boundedInteger(value, fallback, minimum, maximum) {
   const parsed = Number(value);
@@ -33,6 +34,10 @@ const SESSION_TTL_MS = boundedInteger(
 );
 const ADMIN_EMAIL = (process.env.ZOK_ADMIN_EMAIL || '').trim().toLowerCase();
 const ADMIN_PASSWORD_HASH = process.env.ZOK_ADMIN_PASSWORD_HASH || '';
+const ADMIN_TENANT_ID = (process.env.ZOK_ADMIN_TENANT_ID || '').trim();
+if (ADMIN_TENANT_ID && !UUID_PATTERN.test(ADMIN_TENANT_ID)) {
+  throw new Error('ZOK_ADMIN_TENANT_ID must be a UUID');
+}
 const AUTH_CONFIGURED = Boolean(ADMIN_EMAIL && ADMIN_PASSWORD_HASH);
 const DEFAULT_ALLOWED_ORIGINS = IS_PRODUCTION
   ? ['https://zok.zeaz.dev']
@@ -279,7 +284,6 @@ app.use(express.json({ limit: '64kb' }));
 app.use('/api', requireAuth);
 app.use('/api', requireCsrf);
 
-// Default database state
 const DEFAULT_DB = {
   chats: [
     {
@@ -600,7 +604,11 @@ app.post('/api/auth/login', rateLimit({ windowMs: 15 * 60_000, max: 10 }), (req,
     token,
     csrfToken: randomBytes(32).toString('base64url'),
     expiresAt: Date.now() + SESSION_TTL_MS,
-    user: { email, role: 'owner' },
+    user: {
+      email,
+      role: 'owner',
+      ...(ADMIN_TENANT_ID ? { tenantId: ADMIN_TENANT_ID } : {}),
+    },
   };
   sessions.set(token, session);
   setAuthCookies(res, session);
@@ -617,19 +625,16 @@ app.post('/api/auth/logout', (req, res) => {
   return res.status(204).end();
 });
 
-// 1. GET Full State
 app.get('/api/db', async (req, res) => {
   const db = await readDB();
   res.json(db);
 });
 
-// 2. GET Chats
 app.get('/api/chats', async (req, res) => {
   const db = await readDB();
   res.json(db.chats);
 });
 
-// 3. POST Message to Chat (and trigger mock automated customer reply)
 app.post('/api/chats/:id/messages', async (req, res) => {
   const chatId = parseChatId(req.params.id);
   const textResult = requiredText(req.body?.text, 'Text content');
@@ -658,12 +663,11 @@ app.post('/api/chats/:id/messages', async (req, res) => {
   if (!updatedChat) return res.status(404).json({ error: 'Chat not found' });
   res.status(201).json(updatedChat);
 
-  // 2. Schedule automated client response (simulating webhook latency)
   setTimeout(async () => {
     try {
       let responseText = `Hi, thank you for writing back! I am currently away but our team will update you as soon as possible.`;
       const lowercaseText = textResult.value.toLowerCase();
-      
+
       if (lowercaseText.includes('help') || lowercaseText.includes('support')) {
         responseText = `Got it. I've routed this conversation to our priority support desk. Alex Rivera will review this shortly!`;
       } else if (lowercaseText.includes('order') || lowercaseText.includes('track')) {
@@ -682,8 +686,6 @@ app.post('/api/chats/:id/messages', async (req, res) => {
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         });
         liveDb.chats[liveChatIndex].time = 'Just now';
-
-        // If user switched away, increment unread badge counter.
         liveDb.chats[liveChatIndex].unread = chatId !== activeChatId
           ? (liveDb.chats[liveChatIndex].unread || 0) + 1
           : 0;
@@ -694,7 +696,6 @@ app.post('/api/chats/:id/messages', async (req, res) => {
   }, 1500);
 });
 
-// 4. POST Reset Unread count
 app.post('/api/chats/:id/read', async (req, res) => {
   const chatId = parseChatId(req.params.id);
   if (chatId === null) return res.status(400).json({ error: 'Chat id must be a positive integer' });
@@ -710,7 +711,6 @@ app.post('/api/chats/:id/read', async (req, res) => {
   return res.status(404).json({ error: 'Chat not found' });
 });
 
-// 5. POST Tags update
 app.post('/api/chats/:id/tags', async (req, res) => {
   const chatId = parseChatId(req.params.id);
   const { tags } = req.body || {};
@@ -730,7 +730,6 @@ app.post('/api/chats/:id/tags', async (req, res) => {
   return res.status(404).json({ error: 'Chat not found' });
 });
 
-// 6. GET/POST AI Config
 app.get('/api/ai-config', async (req, res) => {
   const db = await readDB();
   res.json(db.aiConfig);
@@ -767,7 +766,6 @@ app.post('/api/ai-config', async (req, res) => {
   return res.json(savedConfig);
 });
 
-// 7. GET/POST Flow Nodes
 app.get('/api/flow-nodes', async (req, res) => {
   const db = await readDB();
   res.json(db.flowNodes);
@@ -785,7 +783,6 @@ app.post('/api/flow-nodes', async (req, res) => {
   return res.json(savedNodes);
 });
 
-// 8. GET/POST Campaigns (Broadcasts)
 app.get('/api/campaigns', async (req, res) => {
   const db = await readDB();
   res.json(db.campaigns);
@@ -821,7 +818,6 @@ app.post('/api/campaigns', async (req, res) => {
   return res.status(201).json(newCamp);
 });
 
-// 9. GET/POST Integrations
 app.get('/api/integrations', async (req, res) => {
   const db = await readDB();
   res.json({ integrations: db.integrations, syncLogs: db.syncLogs });
