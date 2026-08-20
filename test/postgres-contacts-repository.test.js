@@ -8,7 +8,7 @@ test('contacts repository scopes reads and inserts to the transaction tenant', a
     tenantId: 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb',
     async query(text, values = []) {
       calls.push({ text, values });
-      if (text.startsWith('SELECT')) {
+      if (text.trimStart().startsWith('SELECT')) {
         return { rows: [{ id: 'c1', name: 'Contact A', email: 'a@example.test' }] };
       }
       return { rows: [{ id: 'c2', name: 'Contact B', email: 'b@example.test' }] };
