@@ -1,5 +1,4 @@
 import { execFile } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -11,7 +10,7 @@ const migrationDirectory = path.resolve(
   '../server/storage/postgres/migrations',
 );
 
-async function runPsql(databaseUrl, args, input) {
+async function runPsql(databaseUrl, args) {
   if (!databaseUrl || typeof databaseUrl !== 'string') {
     throw new Error('PostgreSQL database URL is required');
   }
@@ -21,7 +20,6 @@ async function runPsql(databaseUrl, args, input) {
     [databaseUrl, '--no-psqlrc', '--set', 'ON_ERROR_STOP=1', ...args],
     {
       encoding: 'utf8',
-      input,
       maxBuffer: 2 * 1024 * 1024,
     },
   );
@@ -29,8 +27,8 @@ async function runPsql(databaseUrl, args, input) {
 }
 
 async function executeMigrationFile(databaseUrl, fileName) {
-  const sql = await readFile(path.join(migrationDirectory, fileName), 'utf8');
-  await runPsql(databaseUrl, ['--single-transaction', '--file', '-'], sql);
+  const migrationPath = path.join(migrationDirectory, fileName);
+  await runPsql(databaseUrl, ['--single-transaction', '--file', migrationPath]);
 }
 
 export async function applyInitialMigration(databaseUrl) {
