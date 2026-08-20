@@ -105,11 +105,10 @@ Completed with current repository evidence:
 - [x] Tenant-scoped contacts repository with validation and real PostgreSQL coverage.
 - [x] Tenant-scoped conversations/messages repository with validated channel/direction/sender semantics.
 - [x] Real contact → conversation → message integration under PostgreSQL RLS and tenant-scoped relational integrity.
-- [x] Explicit pure compatibility mapping from legacy `/api/chats` aggregates to normalized repository inputs, with stable legacy IDs and fail-closed contract tests. Source evidence: test-first commit `26906f28c34d74077c3e496d0ddbf1ab21a080fb`, implementation `777af487395161b74fc1be472d1f5ddd448c73fb`; synchronized-head CI remains pending.
+- [x] Explicit pure compatibility mapping from legacy `/api/chats` aggregates to normalized repository inputs, with stable legacy IDs and fail-closed contract tests. Source evidence: test-first commit `26906f28c34d74077c3e496d0ddbf1ab21a080fb`, implementation `777af487395161b74fc1be472d1f5ddd448c73fb`; synchronized mapper verification is green in CI `32351874076` after lint-fix commit `42c1c4995de3f3a22d743f53dd6a630747a32884`.
 
 Still incomplete:
 
-- [ ] Obtain green synchronized-head CI for the legacy mapping slice.
 - [ ] Cut over a bounded Express read/write route through `withRequestTransaction` and PostgreSQL repositories with equivalent auth/CSRF/validation behavior.
 - [ ] Migrate remaining live resources: campaigns, integrations, AI config, flow state.
 - [ ] Verify JSON→PostgreSQL import/cutover and rollback.
@@ -138,19 +137,18 @@ CI enforces release-document presence, PostgreSQL 17 service health, real migrat
 
 Unless a security/CI defect supersedes it:
 
-1. Obtain green synchronized-head CI for the legacy compatibility mapper and its fail-closed contract tests.
-2. Cut over one bounded chat read/write path through authenticated request → `withRequestTransaction` → normalized PostgreSQL repositories, preserving current security and API regression behavior.
-3. Expand chat/message cutover only after the bounded route is green; retain an explicit rollback switch until import/cutover evidence exists.
-4. Add PostgreSQL repositories for campaigns and integrations, then AI/flow state.
-5. Build and verify JSON→PostgreSQL import/cutover + rollback and backup/restore evidence.
-6. Implement production tenant-aware user identity, deny-by-default RBAC, append-only audit foundation, then shared sessions/rate-limit state.
-7. Provider-neutral event + queue/retry/idempotency base and first channel adapter/consent enforcement.
-8. AI policy/evaluation service, privacy lifecycle, observability/load/DR/security exercises.
-9. Product completeness and Gold Master polish.
+1. Cut over one bounded chat read/write path through authenticated request → `withRequestTransaction` → normalized PostgreSQL repositories, preserving current security and API regression behavior, with JSON retained as an explicit rollback path.
+2. Expand chat/message cutover only after the bounded route is green; retain the rollback switch until import/cutover evidence exists.
+3. Add PostgreSQL repositories for campaigns and integrations, then AI/flow state.
+4. Build and verify JSON→PostgreSQL import/cutover + rollback and backup/restore evidence.
+5. Implement production tenant-aware user identity, deny-by-default RBAC, append-only audit foundation, then shared sessions/rate-limit state.
+6. Provider-neutral event + queue/retry/idempotency base and first channel adapter/consent enforcement.
+7. AI policy/evaluation service, privacy lifecycle, observability/load/DR/security exercises.
+8. Product completeness and Gold Master polish.
 
 Dependabot major-version PRs remain separate until independently compatibility-tested.
 
-## 8. Current execution evidence — 2026-08-20 legacy chat compatibility mapping
+## 8. Current execution evidence — 2026-08-20 legacy chat compatibility mapping CI repair
 
 **Branch:** `feat/postgres-storage-foundation`  
 **PR:** #6 (draft)
@@ -161,15 +159,18 @@ Dependabot major-version PRs remain separate until independently compatibility-t
 - Stable compatibility keys are `legacy-chat:<id>` for contact/thread identity and `legacy-chat:<id>:message:<index>` for legacy messages.
 - Customer→inbound and agent→outbound semantics are explicit. Unsupported channels/senders and malformed IDs/text/tags fail closed.
 - Display-only legacy time strings are retained as metadata rather than converted into fabricated timestamps.
-- At synchronization time GitHub had not exposed a workflow run for the new head, so this slice is not recorded as CI-verified yet. Previous head `1d1ac590c381822adc85b8dbd02d156a401d2e1f` remains green in CI `32346519607` but does not verify this new mapper.
+- CI `32346860728` reached the new mapper slice and passed PostgreSQL service health, release-document checks, `npm ci`, and all 24 tests, then failed at lint because `test/legacy-chat-mapping.test.js` referenced `structuredClone` while the repository ESLint environment did not declare that global.
+- Fix commit `42c1c4995de3f3a22d743f53dd6a630747a32884` replaced only the test-fixture clone with JSON round-trip cloning; production mapper behavior and route boundaries were unchanged.
+- CI `32351874076` then passed release-document checks, PostgreSQL service health, `npm ci`, all 24 tests, lint, typecheck, build, and production dependency audit.
+- Local clone verification was attempted but the execution container could not resolve `github.com`; this did not replace CI evidence and no local-pass claim is made.
 
 ### Residual boundary
 
-The parent durable-data P0 item stays unchecked. Live Express data routes still use the JSON adapter. The compatibility mapper is not a production cutover, import, rollback, backup/restore, or multi-user identity/RBAC implementation.
+The parent durable-data P0 item stays unchecked. Live Express data routes still use the JSON adapter. The compatibility mapper and lint repair are not a production cutover, import, rollback, backup/restore, or multi-user identity/RBAC implementation.
 
 ### Next safe unit
 
-First require a green synchronized-head CI run for this mapping slice. Only then introduce a configuration-gated bounded PostgreSQL chat route with API/security regression tests and JSON retained as an explicit rollback path.
+Introduce one configuration-gated bounded PostgreSQL chat read/write path with API/security regression tests, authenticated request → `withRequestTransaction` → normalized repositories, and JSON retained as an explicit rollback path. Do not widen the cutover until the bounded path is green.
 
 ## 9. Release decision
 
