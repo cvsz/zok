@@ -22,24 +22,28 @@ This checklist is the operational companion to `exec-planing.md`. Items may be c
 ## P0 — Gold Master blockers
 
 ### Durable data platform
-- [x] PostgreSQL schema defined for tenants, users, roles, contacts, conversations, messages, campaigns, integrations, consent, sessions, and audit events. Evidence: `001_initial.up.sql`, `test/postgres-schema.test.js`, CI `32330521144`.
-- [x] Migration up/down/replay verification against a real PostgreSQL service. Evidence: CI `32330980037`.
-- [x] PostgreSQL tenant-isolation runtime tests using a non-superuser `NOBYPASSRLS` role. Evidence: CI `32331262316`.
-- [x] Tenant-scoped relational integrity prevents cross-tenant object references. Evidence: CI `32331409295`.
+- [x] PostgreSQL schema defined for tenants, users, roles, contacts, conversations, messages, campaigns, integrations, consent, sessions, and audit events. Evidence: `001_initial.up.sql`, CI `32330521144`.
+- [x] Migration up/down/replay verified against PostgreSQL. Evidence: CI `32330980037`.
+- [x] PostgreSQL tenant isolation verified using non-superuser `NOBYPASSRLS`. Evidence: CI `32331262316`.
+- [x] Tenant-scoped relational integrity rejects cross-tenant object references. Evidence: CI `32331409295`.
 - [x] Concurrent PostgreSQL uniqueness/integrity verified. Evidence: CI `32331479289`.
 - [x] JSON storage adapter contract implemented and tested.
 - [x] Storage abstraction is the live Express persistence boundary. Evidence: CI `32333372481`.
 - [x] PostgreSQL transaction adapter provides explicit BEGIN/COMMIT/ROLLBACK, transaction-local tenant context, rollback, guaranteed release, and pool shutdown. Evidence: CI `32335166312`.
-- [x] Authenticated identity objects fail closed unless they carry a validated tenant UUID before entering a PostgreSQL transaction. Evidence: red `32337912124`, green `32337964164`.
-- [x] Production Node PostgreSQL driver/pool is installed with a synchronized npm-generated lockfile and real PostgreSQL 17 pool/RLS integration coverage. Evidence: `pg ^8.23.0`, `createPostgresPool`, red `32344793562`, isolated green `32344957870`.
-- [x] Express authenticated principal can carry a validated configured tenant UUID. Evidence: red `32345044007`, green `32345360432`.
-- [x] Request-to-transaction binding helper fails closed without authenticated tenant identity and delegates only through `withIdentityTransaction`. Evidence: red `32345449008`, green `32345518040`.
+- [x] Authenticated identities fail closed without a valid tenant UUID before PostgreSQL transaction acquisition. Evidence: red `32337912124`, green `32337964164`.
+- [x] `pg ^8.23.0` is installed with an npm-generated synchronized lockfile and real PostgreSQL 17 pool/RLS integration. Evidence: red `32344793562`, isolated green `32344957870`.
+- [x] Express configured-admin principal can carry a validated tenant UUID. Evidence: red `32345044007`, green `32345360432`.
+- [x] Request-to-transaction helper fails closed without authenticated tenant identity. Evidence: red `32345449008`, green `32345518040`.
+- [x] PostgreSQL transaction context exposes only the already-validated tenant ID to repository code. Evidence: red `32345984084`, green `32346064982`.
+- [x] Tenant-scoped normalized contacts repository implemented with validation and real PostgreSQL/RLS coverage. Evidence: repository red `32345736541`; test-harness defect isolated in `32345808587`; transaction/runtime green `32346064982`.
+- [x] Tenant-scoped conversations/messages repository implemented with validated channels/directions/sender types. Evidence: red `32346149065`, green `32346242401`.
+- [x] Real PostgreSQL 17 integration verifies contact → conversation → message writes for tenant A, no conversation visibility for tenant B, and database rejection of cross-tenant contact references. Evidence: CI `32346343315`.
 - [ ] Live Express data routes switched from JSON to PostgreSQL with equivalent API regression coverage.
-- [ ] Production data migration/cutover and rollback procedure verified.
+- [ ] Production JSON→PostgreSQL data migration/cutover and rollback procedure verified.
 - [ ] Backup and restore procedure verified with recorded RPO/RTO.
 
 ### Identity and governance
-- [ ] Tenant-aware principal model fully implemented for production multi-user identity. Current bounded evidence: configured admin sessions expose validated `tenantId`, and request-to-PostgreSQL transaction binding is fail-closed; production user/role resolution is not complete.
+- [ ] Tenant-aware principal model fully implemented for production multi-user identity. Current bounded evidence: configured admin sessions expose validated `tenantId`, request-to-PostgreSQL transaction binding is fail-closed; production user/role resolution remains incomplete.
 - [ ] Deny-by-default RBAC implemented.
 - [ ] Field/channel-level authorization tests added where applicable.
 - [ ] Session revocation implemented.
@@ -115,16 +119,15 @@ This checklist is the operational companion to `exec-planing.md`. Items may be c
 - [ ] Support/operator training material prepared.
 - [ ] Gold Master evidence record signed.
 
-## Current execution cycle — 2026-08-20 real PostgreSQL pool + request tenant binding
+## Current execution cycle — 2026-08-20 normalized relational repositories
 
 - [x] Reused draft PR #6; no duplicate implementation PR created.
-- [x] Generated `pg` manifest + lockfile via npm in a temporary write-enabled workflow, verified `npm ci`, then removed that temporary workflow.
-- [x] Real pool integration was test-first: red `32344793562` because `createPostgresPool` did not exist.
-- [x] Initial implementation run `32344862826` exposed a test-isolation race around concurrent `pgcrypto` setup; production migration was not weakened. Integration test was isolated to its own database.
-- [x] Real PostgreSQL pool/RLS integration green in `32344957870`.
-- [x] Express tenant principal test red `32345044007`; validated `ZOK_ADMIN_TENANT_ID` propagation green in `32345360432`.
-- [x] Request-to-transaction binding helper red `32345449008`; green in `32345518040`.
-- [x] Parent durable-data P0 remains incomplete because live Express data routes are still JSON-backed and production migration/cutover/rollback plus backup/restore evidence do not exist.
+- [x] Corrected whitespace-sensitive contacts repository test fake after `32345808587`; production SQL was not changed to satisfy the defective stub.
+- [x] Real transaction context test red `32345984084` proved repositories were not receiving tenant context; transaction object now exposes the validated tenant ID and greened in `32346064982`.
+- [x] Contacts repository validation/list/create contract verified.
+- [x] Conversations/messages repository added test-first: red `32346149065`, green `32346242401`.
+- [x] Real relational repository integration green `32346343315` with RLS and tenant-scoped composite FK enforcement.
+- [x] Parent durable-data P0 remains incomplete because all live Express data routes still use the JSON adapter and production migration/cutover/rollback plus backup/restore evidence do not exist.
 - [x] `CHANGELOG.md`, `exec-planing.md`, and `IMPLEMENTATION-CHECKLIST.md` synchronized.
 
 ## Gold Master rule
