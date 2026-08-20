@@ -47,6 +47,10 @@ The format follows Keep a Changelog principles and uses calendar dates while the
 - Legacy compatibility mapping contract added test-first in commit `26906f28c34d74077c3e496d0ddbf1ab21a080fb`; implementation commit `777af487395161b74fc1be472d1f5ddd448c73fb`.
 - Synchronized mapper head CI `32346860728` exposed one ESLint `no-undef` regression for `structuredClone` after all 24 tests passed. Fix commit `42c1c4995de3f3a22d743f53dd6a630747a32884` replaced it with a JSON-compatible clone; CI `32351874076` then passed release-document checks, PostgreSQL service health, `npm ci`, all 24 tests, lint, typecheck, build, and production dependency audit.
 
+### Post-merge execution
+- PR #6 was the only open PR and was squash-merged to `main` as `edbc8ba85a534e49fe3881b24c8a55560671421f` after green CI `32352025017`.
+- The merged foundation remains intentionally not Gold Master; bounded route cutover, import/rollback, backup/restore, production RBAC, and Gate D evidence remain incomplete.
+
 ### Release status
 - FOUNDATION HARDENED / NOT GOLD MASTER.
 - Live Express data routes remain JSON-backed. Legacy chat mapping is now explicit, contract-tested, and CI-green, but route cutover, JSON→PostgreSQL migration/rollback, backup/restore, production multi-user tenant identity/RBAC, shared session/rate-limit state, and remaining Gate D evidence remain incomplete.
