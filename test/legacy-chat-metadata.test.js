@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { overlayPostgresMessages } from '../server/storage/postgres/chat-route-gate.js';
 import { mapLegacyChatToNormalized } from '../server/storage/postgres/legacy-chat-mapping.js';
 import { createLegacyChatRuntime } from '../server/storage/postgres/legacy-chat-runtime.js';
 
@@ -35,6 +36,35 @@ test('legacy mapper deterministically includes chat metadata, unread state, and 
     unread: 3,
     displayTime: 'Yesterday',
   });
+});
+
+test('PostgreSQL read overlay replaces legacy metadata without changing API shape', () => {
+  const overlaid = overlayPostgresMessages({
+    ...legacyChat,
+    avatar: 'JSON',
+    unread: 99,
+    time: 'JSON time',
+    details: { ...legacyChat.details, assigned: 'JSON owner', tags: ['JSON'], orders: [{ id: 'json' }] },
+  }, {
+    conversation: { id: conversationId },
+    messages: [],
+    metadata: {
+      avatar: 'PG',
+      assigned: 'Postgres owner',
+      tags: ['Priority'],
+      orders: [{ id: 'pg' }],
+      unread: 1,
+      displayTime: 'Postgres time',
+    },
+  });
+
+  assert.equal(overlaid.avatar, 'PG');
+  assert.equal(overlaid.unread, 1);
+  assert.equal(overlaid.time, 'Postgres time');
+  assert.equal(overlaid.details.assigned, 'Postgres owner');
+  assert.deepEqual(overlaid.details.tags, ['Priority']);
+  assert.deepEqual(overlaid.details.orders, [{ id: 'pg' }]);
+  assert.deepEqual(overlaid.messages, []);
 });
 
 function createStorageFixture() {
