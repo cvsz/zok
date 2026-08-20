@@ -154,7 +154,6 @@ test('imported chat cutover stays PostgreSQL-only, missing imports fail closed, 
     const divergentJsonChat = sourceChat(41, 'JSON rollback-only divergent message');
     await writeDatabase(databaseFile, [divergentJsonChat]);
 
-    ({ server: postgresServer, baseUrl: appUrl.baseUrl } = { server: undefined, baseUrl: undefined });
     const postgresRuntime = await startConfiguredServer({
       mode: 'postgres',
       databaseFile,
