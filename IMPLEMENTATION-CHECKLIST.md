@@ -28,7 +28,7 @@ This checklist is the operational companion to `exec-planing.md`. Items may be c
 - [x] Tenant-scoped relational integrity added so cross-tenant object references fail at the database foreign-key boundary. Evidence: `003_tenant_relational_integrity.*.sql`, CI `32331409295`.
 - [x] Concurrent PostgreSQL write/integrity test added. Twelve competing inserts for one tenant/email key result in exactly one persisted row. Evidence: CI `32331479289`.
 - [x] First local storage-boundary slice added: tested JSON adapter contract in `server/storage/json-storage.js`.
-- [ ] Storage abstraction is the live Express persistence boundary rather than `server.js`-owned JSON functions.
+- [x] Storage abstraction is now the live Express persistence boundary rather than `server.js`-owned JSON functions. Evidence: `server.js`, `test/storage-boundary-wiring.test.js`, CI `32333372481`.
 - [ ] PostgreSQL application adapter with connection pooling and explicit transaction boundaries implemented.
 - [ ] Live Express request path switched from JSON to PostgreSQL with equivalent API regression coverage.
 - [ ] Production data migration/cutover and rollback procedure verified.
@@ -111,16 +111,15 @@ This checklist is the operational companion to `exec-planing.md`. Items may be c
 - [ ] Support/operator training material prepared.
 - [ ] Gold Master evidence record signed.
 
-## Current execution cycle — 2026-08-20 durable PostgreSQL security/integrity
+## Current execution cycle — 2026-08-20 Express storage-boundary wiring
 
 - [x] Reused active draft PR #6; no duplicate implementation PR was created.
-- [x] Real PostgreSQL migration up/down/replay verified: red `32330868918`, green `32330980037`.
-- [x] Tenant RLS added test-first: red `32331153421`, green `32331262316`.
-- [x] RLS tested through a non-superuser/NOBYPASSRLS role to avoid superuser bypass false positives.
-- [x] Tenant-scoped relational foreign keys added test-first: red `32331342959`, green `32331409295`.
-- [x] Concurrent uniqueness/integrity test passed in CI `32331479289`.
-- [x] Full green gates after the latest implementation: PostgreSQL service, tests, lint, typecheck, build, production dependency audit.
-- [x] Residual risk recorded: the live Express runtime remains JSON-backed; PostgreSQL application adapter/pool/transactions/cutover and backup/restore remain incomplete.
+- [x] Added `test/storage-boundary-wiring.test.js` before implementation.
+- [x] TDD red confirmed in CI `32333253897`: the new architecture test failed while PostgreSQL service/docs/install stages remained healthy.
+- [x] Removed `server.js`-owned filesystem persistence implementation and instantiated the tested `createJsonStorage` adapter instead.
+- [x] `readDB()` and `updateDB()` now delegate to the adapter, preserving existing route call sites and behavior.
+- [x] Green verification confirmed in CI `32333372481`: storage-boundary test, API regression tests, PostgreSQL tests, lint, typecheck, build, and production dependency audit passed.
+- [x] Residual risk recorded: the live adapter is still JSON-backed; PostgreSQL application pool/transaction/tenant-context wiring and production cutover remain incomplete.
 - [x] `CHANGELOG.md`, `exec-planing.md`, and `IMPLEMENTATION-CHECKLIST.md` synchronized.
 
 ## Gold Master rule
