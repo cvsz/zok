@@ -26,8 +26,8 @@ Operational companion to `exec-planing.md`. Checkboxes require current evidence;
 - [x] Read-only exact-state cutover rehearsal and byte-preserved JSON rollback snapshot. Evidence: `b82df5aba873238fe5a02ab56360a739a229eb0a`, `6169f08c132345480c02d2f0549c92052b390dad`, `9b9fc95314b9c90190d69913037e08810c44b165`; CI `32389535833`, synchronized head `32389896928`.
 - [x] PostgreSQL persistence boundary for legacy chat metadata/unread/tags. Evidence: `7a7b8c8c56c960b405ab63738b9f1a0648ac5021`, `191bdd028502382f52894c8a8cb5c592686c1bf4`, `b474ad078147d510a49b5bc65c314cd6c7aba259`, `357c58128dce60370e61be1e1a40acaf479f61c5`, service-backed `19852412c602756af826a10c8541265cea10620d`; CI `32393891922`.
 - [x] PostgreSQL-mode `/api/chats` GET metadata overlay preserves legacy response shape. Evidence: regression CI `32395298787`, compatibility repair `b162f4753dd450c92ef0056fe52a3a032e7d06e2`, overlay test `a8b2aab893f9e12b2dbaeae80055dae8f842843a`, green CI `32395415647`.
-- [x] PostgreSQL-mode `/api/chats/:id/read` and `/api/chats/:id/tags` mutate tenant-scoped PostgreSQL metadata while preserving API shape and JSON rollback unread/tag state. Evidence: test-first `515cc33c228dcae498d03e52a440ac5af3e2d0e7` with expected failing CI `32400607666`; implementation `085e024914953e0dd08e336593c8dc5aa07586eb`; green implementation CI `32400811542`.
-- [ ] Message-side unread/display-time ownership migrated and verified without mixed-store side effects.
+- [x] PostgreSQL-mode `/api/chats/:id/read` and `/api/chats/:id/tags` mutate tenant-scoped PostgreSQL metadata while preserving API shape and JSON rollback unread/tag state. Evidence: test-first `515cc33c228dcae498d03e52a440ac5af3e2d0e7`, expected failing CI `32400607666`, implementation `085e024914953e0dd08e336593c8dc5aa07586eb`, green CI `32400811542`, synchronized-head CI `32401134450`.
+- [x] PostgreSQL-mode message-side unread/display-time ownership is verified without JSON rollback mutation. Evidence: test-first `0fc6c0c7952b533cd694780a5edec0ff6c6bb328` with expected failing CI `32408703635`; runtime metadata implementation `fbc160bdad6da092844cdb36ff90e3abe6ae3fe3`; JSON rollback ownership guard `d9d7eeae1047778904938b371e1d26bbe5f6722d`; unit/service-backed coverage head `8e49a56c0daf77b8ecb0bc25783b75e9c8157342`; green implementation CI `32408937061`. Verified behavior: outgoing activity projects `Just now` without unread increment, inactive inbound reply increments unread, active inbound reply remains unread zero, and the JSON rollback snapshot remains byte-for-byte unchanged.
 - [ ] Production chat cutover/canary and operator rollback in a real authorized deployment.
 - [ ] Campaigns/integrations/AI config/flow state migrated to PostgreSQL.
 - [ ] Application-wide JSON→PostgreSQL cutover and rollback verified.
@@ -78,13 +78,13 @@ Operational companion to `exec-planing.md`. Checkboxes require current evidence;
 - [ ] Accessibility, cross-browser/device regression, release/migration/operator documentation.
 - [ ] Signed Gold Master evidence record.
 
-## Current PR #17 boundary
+## Current PR #18 boundary
 
-PR #17 remains draft/open/unmerged on `feat/postgres-chat-import`, based on main `29f0055d439fda5cf5ac8bab5d8755b371be1817`. PostgreSQL-mode chat GET/read/tag now consumes persisted metadata through the request-bound runtime; JSON remains default/rollback. Message-side unread/display-time effects remain JSON-backed and are intentionally not marked complete.
+PR #17 is merged as `e9414b83def9539e0b09c1a8a8419aadbac6b62e`. Draft PR #18 (`feat/postgres-message-metadata`) is based on current main `63976dc9d381b7e37f75db275835924df6da4c24` and contains only the bounded PostgreSQL-mode message activity ownership slice. `ZOK_CHAT_STORAGE=json` remains the default/rollback path. This slice does not constitute a production cutover/canary.
 
 ## Next bounded unit
 
-- [ ] Move only PostgreSQL-mode message-side unread/display-time effects through the verified PostgreSQL metadata runtime, with service-backed active/inactive-chat API regression and proof that PostgreSQL-mode message activity does not mutate the JSON rollback snapshot. Preserve JSON mode and do not migrate unrelated resources.
+- [ ] Execute controlled production chat canary/cutover/operator rollback only in an explicitly authorized deployment environment, with preflight/import-state proof, health/API/tenant-isolation checks, observation criteria, explicit rollback trigger/execution, and post-rollback verification. If no deployment environment is explicitly authorized, report that blocker and do not fabricate evidence or silently skip the P0 gate.
 
 ## Gold Master rule
 

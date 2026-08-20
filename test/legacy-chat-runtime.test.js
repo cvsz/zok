@@ -25,6 +25,9 @@ function createStorageFixture({ found = true } = {}) {
           if (/FROM contacts/i.test(text) && /WHERE id = \$1/i.test(text)) {
             return { rows: [{ id: contactId, metadata: { legacyChatId: 7, tags: [], unread: 0, displayTime: null } }] };
           }
+          if (/UPDATE contacts/i.test(text) && /SET metadata = \$2::jsonb/i.test(text)) {
+            return { rows: [{ id: contactId, metadata: JSON.parse(values[1]) }] };
+          }
           if (/FROM messages m/i.test(text)) {
             return { rows: [{ id: 'eeeeeeee-5555-4555-8555-eeeeeeeeeeee', conversationId, direction: 'inbound', senderType: 'customer', body: 'hello' }] };
           }
@@ -54,9 +57,42 @@ test('legacy chat runtime binds authenticated tenant for bounded read and write'
   assert.equal(written.senderType, 'ai');
   assert.equal(written.body, 'bounded reply');
 
+  const metadataWrite = calls.find(call => call.kind === 'query' && /UPDATE contacts/i.test(call.text));
+  assert.ok(metadataWrite);
+  assert.deepEqual(JSON.parse(metadataWrite.values[1]), {
+    legacyChatId: 7,
+    tags: [],
+    unread: 0,
+    displayTime: 'Just now',
+  });
+
   assert.equal(calls.filter(call => call.kind === 'identity').length, 2);
   assert.ok(calls.filter(call => call.kind === 'identity').every(call => call.identity.tenantId === tenantId));
   assert.ok(calls.some(call => call.kind === 'query' && call.values[0] === 'legacy-chat:7'));
+});
+
+test('legacy chat runtime applies active and inactive inbound unread semantics in PostgreSQL metadata', async () => {
+  const activeFixture = createStorageFixture();
+  const activeRuntime = createLegacyChatRuntime({ storage: activeFixture.storage });
+  await activeRuntime.writeMessage(
+    { user: { tenantId }, body: { activeChatId: 7 } },
+    7,
+    { sender: 'customer', text: 'active reply' },
+  );
+  const activeMetadataWrite = activeFixture.calls.find(call => call.kind === 'query' && /UPDATE contacts/i.test(call.text));
+  assert.equal(JSON.parse(activeMetadataWrite.values[1]).unread, 0);
+  assert.equal(JSON.parse(activeMetadataWrite.values[1]).displayTime, 'Just now');
+
+  const inactiveFixture = createStorageFixture();
+  const inactiveRuntime = createLegacyChatRuntime({ storage: inactiveFixture.storage });
+  await inactiveRuntime.writeMessage(
+    { user: { tenantId }, body: { activeChatId: 8 } },
+    7,
+    { sender: 'customer', text: 'inactive reply' },
+  );
+  const inactiveMetadataWrite = inactiveFixture.calls.find(call => call.kind === 'query' && /UPDATE contacts/i.test(call.text));
+  assert.equal(JSON.parse(inactiveMetadataWrite.values[1]).unread, 1);
+  assert.equal(JSON.parse(inactiveMetadataWrite.values[1]).displayTime, 'Just now');
 });
 
 test('legacy chat runtime fails closed for missing tenant identity and invalid input', async () => {
@@ -67,6 +103,10 @@ test('legacy chat runtime fails closed for missing tenant identity and invalid i
   await assert.rejects(() => runtime.read({ user: { tenantId } }, 0), /positive integer/i);
   await assert.rejects(() => runtime.writeMessage({ user: { tenantId } }, 1, { text: '   ' }), /message text is required/i);
   await assert.rejects(() => runtime.writeMessage({ user: { tenantId } }, 1, { sender: 'hacker', text: 'x' }), /invalid sender/i);
+  await assert.rejects(
+    () => runtime.writeMessage({ user: { tenantId }, body: { activeChatId: 0 } }, 1, { text: 'hello' }),
+    /activeChatId must be a positive integer/i,
+  );
   assert.equal(calls.length, 0);
 });
 
