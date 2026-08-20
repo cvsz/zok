@@ -35,11 +35,21 @@ export function createPostgresStorage({ pool } = {}) {
     }
   }
 
+  async function withIdentityTransaction(identity, operation) {
+    if (!identity || typeof identity !== 'object' || Array.isArray(identity)) {
+      throw new TypeError('identity with tenantId is required');
+    }
+    if (typeof identity.tenantId !== 'string' || !UUID_PATTERN.test(identity.tenantId)) {
+      throw new TypeError('identity tenantId is required and must be a UUID');
+    }
+    return withTenantTransaction(identity.tenantId, operation);
+  }
+
   async function close() {
     if (closed) return;
     closed = true;
     await pool.end();
   }
 
-  return Object.freeze({ withTenantTransaction, close });
+  return Object.freeze({ withTenantTransaction, withIdentityTransaction, close });
 }
