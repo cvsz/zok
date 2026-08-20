@@ -1,20 +1,45 @@
 ---
 name: Feature request
-about: Propose a new feature for the Zaapi clone mockup.
+about: Propose a scoped Zok capability with measurable acceptance criteria.
 title: '[FEATURE] '
 labels: enhancement
 assignees: ''
-
 ---
 
-**Is your feature request related to a problem? Please describe.**
-A clear and concise description of what the problem is. Ex. I'm always frustrated when [...]
+## Problem
+Describe the user/business/operational problem. Avoid prescribing implementation unless it is a hard requirement.
 
-**Describe the solution you'd like**
-A clear and concise description of what you want to happen.
+## Proposed outcome
+Describe the capability and expected behavior.
 
-**Describe alternatives you've considered**
-A clear and concise description of any alternative solutions or features you've considered.
+## Acceptance criteria
+- [ ] Criterion 1
+- [ ] Criterion 2
+- [ ] Criterion 3
 
-**Additional context**
-Add any other context or screenshots about the feature request here.
+## Scope
+### In scope
+-
+
+### Out of scope
+-
+
+## Architecture / security / data impact
+- API or contract changes:
+- Data/schema/migration impact:
+- Authentication/authorization impact:
+- Privacy/compliance impact:
+- Observability/operations impact:
+- Performance/scalability impact:
+
+## Verification evidence expected
+List tests, provider sandbox evidence, benchmarks, screenshots, migration output, security review, or runtime checks required before completion.
+
+## Alternatives considered
+Describe viable alternatives and trade-offs.
+
+## Release-control mapping
+Reference the relevant item in `exec-planing.md` and `IMPLEMENTATION-CHECKLIST.md` when applicable.
+
+## Additional context
+Add diagrams, references, screenshots, or related issues/PRs.
