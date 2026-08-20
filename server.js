@@ -1,6 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -8,6 +7,7 @@ import {
   randomBytes,
   timingSafeEqual,
 } from 'node:crypto';
+import { createJsonStorage } from './server/storage/json-storage.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -521,24 +521,6 @@ const DEFAULT_DB = {
   ]
 };
 
-// The JSON store is only a local/demo adapter. Keep its writes serialized and atomic
-// so concurrent dashboard actions cannot truncate or silently overwrite the file.
-let dbReady;
-let mutationQueue = Promise.resolve();
-
-async function atomicWrite(data) {
-  await fs.mkdir(path.dirname(DB_FILE), { recursive: true });
-  const temporaryFile = `${DB_FILE}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`;
-  let renamed = false;
-  try {
-    await fs.writeFile(temporaryFile, JSON.stringify(data, null, 2), { encoding: 'utf-8', mode: 0o600 });
-    await fs.rename(temporaryFile, DB_FILE);
-    renamed = true;
-  } finally {
-    if (!renamed) await fs.rm(temporaryFile, { force: true }).catch(() => undefined);
-  }
-}
-
 function validateDatabase(data) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     throw new Error('Database is unavailable');
@@ -568,41 +550,18 @@ function validateDatabase(data) {
   return data;
 }
 
-async function ensureDB() {
-  if (!dbReady) {
-    dbReady = (async () => {
-      try {
-        await fs.access(DB_FILE);
-      } catch (error) {
-        if (error.code !== 'ENOENT') throw error;
-        await atomicWrite(DEFAULT_DB);
-      }
-    })();
-  }
-  return dbReady;
-}
+const storage = createJsonStorage({
+  filePath: DB_FILE,
+  defaultData: DEFAULT_DB,
+  validate: validateDatabase,
+});
 
 async function readDB() {
-  await ensureDB();
-  const data = await fs.readFile(DB_FILE, 'utf-8');
-  try {
-    return validateDatabase(JSON.parse(data));
-  } catch (error) {
-    console.error('Database state is invalid; refusing to overwrite it:', error.message);
-    throw new Error('Database is unavailable');
-  }
+  return storage.read();
 }
 
 function updateDB(mutator) {
-  const operation = mutationQueue.then(async () => {
-    const db = await readDB();
-    const result = await mutator(db);
-    await atomicWrite(db);
-    return result;
-  });
-
-  mutationQueue = operation.catch(() => undefined);
-  return operation;
+  return storage.update(mutator);
 }
 
 app.get('/api/health', async (_req, res) => {
