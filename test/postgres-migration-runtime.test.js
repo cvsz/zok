@@ -150,3 +150,32 @@ test('PostgreSQL relational keys reject cross-tenant object references', {
     await rollbackInitialMigration(databaseUrl);
   }
 });
+
+test('PostgreSQL preserves tenant uniqueness under concurrent writes', {
+  skip: databaseUrl ? false : 'ZOK_POSTGRES_TEST_URL is not configured',
+}, async () => {
+  const tenantId = '55555555-5555-4555-8555-555555555555';
+  await applyInitialMigration(databaseUrl);
+  try {
+    await executeSql(databaseUrl, `
+      INSERT INTO tenants (id, slug, name)
+      VALUES ('${tenantId}', 'concurrency', 'Concurrency Tenant');
+    `);
+
+    const attempts = await Promise.allSettled(
+      Array.from({ length: 12 }, () => executeSql(databaseUrl, `
+        INSERT INTO users (tenant_id, email, display_name)
+        VALUES ('${tenantId}', 'same@example.test', 'Concurrent User');
+      `)),
+    );
+
+    assert.equal(attempts.filter(result => result.status === 'fulfilled').length, 1);
+    assert.equal(attempts.filter(result => result.status === 'rejected').length, 11);
+    assert.equal(await queryScalar(databaseUrl, `
+      SELECT count(*) FROM users
+      WHERE tenant_id = '${tenantId}' AND email = 'same@example.test';
+    `), '1');
+  } finally {
+    await rollbackInitialMigration(databaseUrl);
+  }
+});
