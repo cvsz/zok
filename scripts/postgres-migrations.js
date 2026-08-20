@@ -47,6 +47,14 @@ export async function rollbackTenantIsolationMigration(databaseUrl) {
   await executeMigrationFile(databaseUrl, '002_tenant_rls.down.sql');
 }
 
+export async function applyRelationalIntegrityMigration(databaseUrl) {
+  await executeMigrationFile(databaseUrl, '003_tenant_relational_integrity.up.sql');
+}
+
+export async function rollbackRelationalIntegrityMigration(databaseUrl) {
+  await executeMigrationFile(databaseUrl, '003_tenant_relational_integrity.down.sql');
+}
+
 export async function executeSql(databaseUrl, sql) {
   await runPsql(databaseUrl, ['--quiet', '--command', sql]);
 }
