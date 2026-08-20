@@ -13,15 +13,18 @@ The format follows Keep a Changelog principles and uses calendar dates while the
 - PostgreSQL 17 service-backed migration up/down/replay verification.
 - Forced tenant RLS using fail-closed `app.tenant_id` policies and non-superuser/NOBYPASSRLS negative tests.
 - Tenant-scoped composite foreign keys and concurrent uniqueness/integrity verification.
-- `server/storage/postgres-storage.js` with explicit transaction boundaries, transaction-local tenant context, rollback, guaranteed client release, `withIdentityTransaction`, and real `pg.Pool` factory.
-- npm-generated synchronized `pg ^8.23.0` manifest/lockfile and real PostgreSQL 17 pool/RLS integration test.
-- Validated `ZOK_ADMIN_TENANT_ID` propagation into the bounded configured-admin authenticated principal.
-- `server/storage/request-transaction.js` as a fail-closed request-principal → `withIdentityTransaction` boundary.
+- `server/storage/postgres-storage.js` with real `pg.Pool`, explicit transaction boundaries, transaction-local tenant context, rollback, guaranteed client release, and authenticated identity binding.
+- npm-generated synchronized `pg ^8.23.0` manifest/lockfile and real PostgreSQL 17 pool/RLS integration coverage.
+- Validated `ZOK_ADMIN_TENANT_ID` propagation into the bounded configured-admin principal.
+- `server/storage/request-transaction.js` as a fail-closed request-principal → PostgreSQL transaction boundary.
+- `server/storage/postgres/contacts-repository.js` for tenant-scoped normalized contact reads/creates with validation.
+- `server/storage/postgres/conversations-repository.js` for tenant-scoped conversation creation, message insertion, and conversation listing with validated channel/direction/sender semantics.
+- Real PostgreSQL relational repository integration proving contact → conversation → message writes, tenant isolation, and cross-tenant relationship rejection.
 
 ### Changed
 - `server.js` delegates filesystem persistence to `createJsonStorage` rather than owning JSON write internals.
-- PostgreSQL foundation now has a production Node driver, synchronized lockfile, real pooled transactions, database RLS enforcement, and request tenant binding primitives.
-- Durable-data execution order now requires explicit normalized relational repositories and incremental route cutover rather than a monolithic JSON-in-PostgreSQL compatibility shortcut.
+- PostgreSQL transaction callbacks now expose the already-validated `tenantId` to repository code so repositories do not accept caller-supplied tenant overrides.
+- Durable-data execution now requires incremental normalized repository and route cutover rather than a monolithic JSON-in-PostgreSQL compatibility shortcut.
 
 ### Verification evidence
 - JSON adapter red `32329601944`; subsequent adapter green.
@@ -32,13 +35,16 @@ The format follows Keep a Changelog principles and uses calendar dates while the
 - Concurrent integrity green `32331479289`.
 - Express storage-boundary red/green `32333253897` / `32333372481`.
 - PostgreSQL identity transaction red/green `32337912124` / `32337964164`.
-- Real PostgreSQL pool red `32344793562`; `32344862826` exposed and preserved a test-isolation failure; isolated real pool/RLS green `32344957870`.
-- Express tenant principal red `32345044007`; green `32345360432`.
-- Request-to-transaction helper red `32345449008`; green `32345518040`.
+- Real PostgreSQL pool red `32344793562`; `32344862826` exposed a test-isolation race; isolated real pool/RLS green `32344957870`.
+- Express tenant principal red/green `32345044007` / `32345360432`.
+- Request-to-transaction helper red/green `32345449008` / `32345518040`.
+- Contacts repository red `32345736541`; `32345808587` identified a test-harness whitespace bug; real transaction tenant-context red/green `32345984084` / `32346064982`.
+- Conversations/messages repository red/green `32346149065` / `32346242401`.
+- Real normalized relational repository integration green `32346343315`.
 
 ### Release status
 - FOUNDATION HARDENED / NOT GOLD MASTER.
-- Live Express data routes remain JSON-backed; normalized PostgreSQL repositories, incremental route cutover, JSON→PostgreSQL migration/rollback, backup/restore, production multi-user tenant identity/RBAC, shared session/rate-limit state, and remaining Gate D evidence are incomplete.
+- Live Express data routes remain JSON-backed. The next blocker is a deliberate compatibility/import mapping for legacy chat IDs and aggregate payload shape before bounded route cutover. JSON→PostgreSQL migration/rollback, backup/restore, production multi-user tenant identity/RBAC, shared session/rate-limit state, and remaining Gate D evidence remain incomplete.
 
 ## [2026-08-10]
 
