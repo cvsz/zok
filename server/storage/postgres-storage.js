@@ -34,6 +34,7 @@ export function createPostgresStorage({ pool } = {}) {
       await client.query('BEGIN');
       await client.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
       const result = await operation(Object.freeze({
+        tenantId,
         query(text, values) {
           return client.query(text, values);
         },
