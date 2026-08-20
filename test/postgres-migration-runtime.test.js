@@ -2,11 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   applyInitialMigration,
+  applyRelationalIntegrityMigration,
   applyTenantIsolationMigration,
   executeSql,
   listPublicTables,
   queryScalar,
   rollbackInitialMigration,
+  rollbackRelationalIntegrityMigration,
   rollbackTenantIsolationMigration,
 } from '../scripts/postgres-migrations.js';
 
@@ -107,6 +109,44 @@ test('PostgreSQL tenant isolation denies cross-tenant reads and writes', {
   } finally {
     await rollbackTenantIsolationMigration(databaseUrl).catch(() => undefined);
     await executeSql(databaseUrl, 'DROP ROLE IF EXISTS zok_app_test;').catch(() => undefined);
+    await rollbackInitialMigration(databaseUrl);
+  }
+});
+
+test('PostgreSQL relational keys reject cross-tenant object references', {
+  skip: databaseUrl ? false : 'ZOK_POSTGRES_TEST_URL is not configured',
+}, async () => {
+  const tenantA = '33333333-3333-4333-8333-333333333333';
+  const tenantB = '44444444-4444-4444-8444-444444444444';
+  const contactA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const contactB = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
+  await applyInitialMigration(databaseUrl);
+  try {
+    await executeSql(databaseUrl, `
+      INSERT INTO tenants (id, slug, name) VALUES
+        ('${tenantA}', 'rel-a', 'Rel A'),
+        ('${tenantB}', 'rel-b', 'Rel B');
+      INSERT INTO contacts (id, tenant_id, name) VALUES
+        ('${contactA}', '${tenantA}', 'A Contact'),
+        ('${contactB}', '${tenantB}', 'B Contact');
+    `);
+    await applyRelationalIntegrityMigration(databaseUrl);
+
+    await executeSql(databaseUrl, `
+      INSERT INTO conversations (tenant_id, contact_id, channel)
+      VALUES ('${tenantA}', '${contactA}', 'line');
+    `);
+
+    await assert.rejects(
+      () => executeSql(databaseUrl, `
+        INSERT INTO conversations (tenant_id, contact_id, channel)
+        VALUES ('${tenantA}', '${contactB}', 'line');
+      `),
+      /foreign key constraint/i,
+    );
+  } finally {
+    await rollbackRelationalIntegrityMigration(databaseUrl).catch(() => undefined);
     await rollbackInitialMigration(databaseUrl);
   }
 });
