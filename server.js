@@ -8,6 +8,10 @@ import {
   timingSafeEqual,
 } from 'node:crypto';
 import { createJsonStorage } from './server/storage/json-storage.js';
+import {
+  createChatRouteGate,
+  overlayPostgresMessages,
+} from './server/storage/postgres/chat-route-gate.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,6 +21,8 @@ const PORT = process.env.PORT || 3005;
 const DB_FILE = process.env.ZOK_DB_FILE || path.join(__dirname, 'server', 'db.json');
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const IS_PRODUCTION = NODE_ENV === 'production';
+const CHAT_STORAGE_MODE = (process.env.ZOK_CHAT_STORAGE || 'json').trim().toLowerCase();
+const CHAT_POSTGRES_URL = (process.env.ZOK_POSTGRES_URL || '').trim();
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function boundedInteger(value, fallback, minimum, maximum) {
@@ -559,6 +565,10 @@ const storage = createJsonStorage({
   defaultData: DEFAULT_DB,
   validate: validateDatabase,
 });
+const chatRouteGate = createChatRouteGate({
+  mode: CHAT_STORAGE_MODE,
+  connectionString: CHAT_POSTGRES_URL,
+});
 
 async function readDB() {
   return storage.read();
@@ -566,6 +576,16 @@ async function readDB() {
 
 function updateDB(mutator) {
   return storage.update(mutator);
+}
+
+async function postgresBackedChat(request, chat) {
+  const state = await chatRouteGate.runtime.read(request, chat.id);
+  if (!state) {
+    const error = new Error('PostgreSQL chat import is incomplete');
+    error.status = 503;
+    throw error;
+  }
+  return overlayPostgresMessages(chat, state);
 }
 
 app.get('/api/health', async (_req, res) => {
@@ -632,7 +652,9 @@ app.get('/api/db', async (req, res) => {
 
 app.get('/api/chats', async (req, res) => {
   const db = await readDB();
-  res.json(db.chats);
+  if (chatRouteGate.mode === 'json') return res.json(db.chats);
+  const chats = await Promise.all(db.chats.map(chat => postgresBackedChat(req, chat)));
+  return res.json(chats);
 });
 
 app.post('/api/chats/:id/messages', async (req, res) => {
@@ -650,15 +672,37 @@ app.post('/api/chats/:id/messages', async (req, res) => {
   }
   if (activeChatId === null) return res.status(400).json({ error: 'activeChatId must be a positive integer' });
 
-  const updatedChat = await updateDB(db => {
-    const chatIndex = db.chats.findIndex(c => c.id === chatId);
-    if (chatIndex === -1) return null;
+  let updatedChat;
+  if (chatRouteGate.mode === 'postgres') {
+    const db = await readDB();
+    const metadataChat = db.chats.find(chat => chat.id === chatId);
+    if (!metadataChat) return res.status(404).json({ error: 'Chat not found' });
 
-    const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    db.chats[chatIndex].messages.push({ sender, text: textResult.value, time: timeString });
-    db.chats[chatIndex].time = 'Just now';
-    return db.chats[chatIndex];
-  });
+    const written = await chatRouteGate.runtime.writeMessage(req, chatId, {
+      sender,
+      text: textResult.value,
+    });
+    if (!written) return res.status(404).json({ error: 'Chat not found' });
+
+    await updateDB(currentDb => {
+      const chat = currentDb.chats.find(item => item.id === chatId);
+      if (chat) chat.time = 'Just now';
+    });
+    updatedChat = {
+      ...(await postgresBackedChat(req, metadataChat)),
+      time: 'Just now',
+    };
+  } else {
+    updatedChat = await updateDB(db => {
+      const chatIndex = db.chats.findIndex(c => c.id === chatId);
+      if (chatIndex === -1) return null;
+
+      const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      db.chats[chatIndex].messages.push({ sender, text: textResult.value, time: timeString });
+      db.chats[chatIndex].time = 'Just now';
+      return db.chats[chatIndex];
+    });
+  }
 
   if (!updatedChat) return res.status(404).json({ error: 'Chat not found' });
   res.status(201).json(updatedChat);
@@ -674,6 +718,22 @@ app.post('/api/chats/:id/messages', async (req, res) => {
         responseText = `Sure thing! You can track all active orders directly in your customer profile page, or click: shopify.com/orders`;
       } else if (lowercaseText.includes('price') || lowercaseText.includes('cost')) {
         responseText = `Our standard pricing starts at $45/month (Basic) up to $97/month (Pro). Let us know if you'd like a custom demo.`;
+      }
+
+      if (chatRouteGate.mode === 'postgres') {
+        await chatRouteGate.runtime.writeMessage(req, chatId, {
+          sender: 'customer',
+          text: responseText,
+        });
+        await updateDB(liveDb => {
+          const liveChatIndex = liveDb.chats.findIndex(c => c.id === chatId);
+          if (liveChatIndex === -1) return;
+          liveDb.chats[liveChatIndex].time = 'Just now';
+          liveDb.chats[liveChatIndex].unread = chatId !== activeChatId
+            ? (liveDb.chats[liveChatIndex].unread || 0) + 1
+            : 0;
+        });
+        return;
       }
 
       await updateDB(liveDb => {
@@ -867,6 +927,9 @@ app.use((error, req, res, next) => {
   if (error.message === 'Database is unavailable') {
     return res.status(503).json({ error: 'Database is unavailable' });
   }
+  if (error.message === 'PostgreSQL chat import is incomplete') {
+    return res.status(503).json({ error: 'PostgreSQL chat import is incomplete' });
+  }
   return res.status(error.status || 500).json({ error: 'Internal server error' });
 });
 
@@ -874,6 +937,11 @@ export function startServer(port = PORT) {
   const server = app.listen(port, '127.0.0.1', () => {
     console.log(`Server is running on port ${server.address().port}`);
   });
+  if (chatRouteGate.mode === 'postgres') {
+    server.once('close', () => {
+      void chatRouteGate.close();
+    });
+  }
   return server;
 }
 
