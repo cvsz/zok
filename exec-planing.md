@@ -1,208 +1,120 @@
 # Zok Master Execution Plan
 
 **Status:** Active release-control ledger  
-**Last updated:** 2026-08-20  
+**Last updated:** 2026-08-21  
 **Canonical branch:** `main`  
-**Current implementation PR:** #16 (`feat/postgres-chat-route-gate`, draft/unmerged)  
-**Current main baseline for this cycle:** `66142a5a98229efd6035ffacf184dfb896fbb76f`  
+**Current implementation PR:** #17 (`feat/postgres-chat-import`, draft/unmerged)  
+**Current main baseline:** `29f0055d439fda5cf5ac8bab5d8755b371be1817`  
 **Canonical runtime:** Vite + React frontend with Express API adapter  
 **Release state:** FOUNDATION HARDENED / NOT GOLD MASTER
 
-This file is the canonical execution source for release work. Every cycle selects the highest-priority incomplete unit that can be implemented and verified safely, records exact evidence, and synchronizes this file with `IMPLEMENTATION-CHECKLIST.md` and `CHANGELOG.md`.
+This is the canonical execution source for release work. Every cycle selects the highest-priority incomplete unit that can be implemented and verified safely. `IMPLEMENTATION-CHECKLIST.md` records evidence-backed completion; `CHANGELOG.md` records changes.
 
-## 1. Release objective and execution rules
-
-Deliver Zok as a production-ready conversational-commerce platform without treating UI simulations, mock integrations, demo AI behavior, static metrics, or local-only persistence as production capability.
+## 1. Execution rules
 
 1. No item is complete without current evidence.
-2. Security/release gates are not weakened to make a change pass.
+2. Security/release gates are never weakened to obtain a pass.
 3. Code-changing cycles add/update tests and run relevant gates.
-4. Completed cycles synchronize `CHANGELOG.md`, `exec-planing.md`, and `IMPLEMENTATION-CHECKLIST.md`.
-5. A bounded verified slice does not complete its broader production phase.
-6. Configuration gates must fail closed for unsafe/missing prerequisites; rollback paths remain explicit until cutover evidence exists.
+4. Completed cycles synchronize this file, `IMPLEMENTATION-CHECKLIST.md`, and `CHANGELOG.md`.
+5. A bounded verified slice does not complete its parent production capability.
+6. Configuration gates fail closed; JSON remains explicit rollback until cutover evidence exists.
 
-## 2. Current architecture baseline
+## 2. Current architecture and durable-data baseline
 
 ```text
-Browser
-  -> Vite/React client
-  -> Express API adapter
-  -> authenticated session principal
-       -> validated configured tenantId
-  -> request-to-transaction binding
-  -> PostgreSQL storage transaction
-       -> real pg.Pool
-       -> BEGIN
-       -> transaction-local app.tenant_id
-       -> normalized tenant-scoped repositories
-       -> COMMIT / ROLLBACK
-       -> guaranteed client release
+Browser -> Vite/React -> Express API -> authenticated principal
+  -> validated tenantId -> request-bound PostgreSQL transaction
+  -> transaction-local app.tenant_id -> tenant-scoped repositories
 
-Normalized PostgreSQL foundation
-  -> contacts repository
-  -> conversations/messages repository
-  -> deterministic legacy chat compatibility mapper
-  -> request-bound legacy chat runtime
-  -> RLS + tenant-scoped composite FK enforcement
-
-Live/default application data path
-  -> ZOK_CHAT_STORAGE=json (default)
-  -> createJsonStorage
-  -> serialized atomic JSON persistence
-
-Bounded opt-in path on draft PR #16
-  -> ZOK_CHAT_STORAGE=postgres + required ZOK_POSTGRES_URL
-  -> /api/chats message history read via request-bound PostgreSQL runtime
-  -> /api/chats/:id/messages write via request-bound PostgreSQL runtime
-  -> JSON still owns legacy chat metadata/unread/tags
-  -> missing expected legacy imports fail closed
+Default live path: ZOK_CHAT_STORAGE=json -> createJsonStorage
+Opt-in chat message/GET/read/tag path: ZOK_CHAT_STORAGE=postgres + ZOK_POSTGRES_URL
 ```
 
-PR #6 merged the schema/RLS/transaction/repository/compatibility foundation. PR #15 subsequently merged the CI-verified request-bound legacy chat PostgreSQL runtime. Main then advanced through separately scoped Dependabot PR #12 to `66142a5a98229efd6035ffacf184dfb896fbb76f`. Draft PR #16 adds only an explicit opt-in PostgreSQL **message** path; JSON remains the default runtime and rollback path. This is not a full application-store cutover.
+Merged PR #6 provides schema/RLS/transactions/repositories/legacy mapping. PR #15 provides the request-bound legacy chat runtime. PR #16 provides configuration-gated PostgreSQL chat message reads/writes and merged as `dc677799cbac6ee793a612330313b1c39f5cc7ca` after synchronized-head CI `32362766907`.
+
+Draft PR #17 provides deterministic import dry-run/replay, resumable source-bound checkpoints, interruption/restart proof, same-tenant/source advisory-lock exclusion, bounded cutover/rollback regression, read-only exact-state rehearsal, PostgreSQL persistence for legacy chat metadata/unread/tags, PostgreSQL GET metadata projection, and PostgreSQL ownership for explicit read/tag mutation routes. Message-side unread/display-time effects remain unresolved and JSON-backed.
 
 ## 3. Master priority queue
 
 ### P0 — Gold-Master blockers
-
-- [ ] Replace local JSON persistence with durable PostgreSQL application runtime storage and verified migration/cutover/rollback.
-- [ ] Introduce production tenant-aware application identity and deny-by-default RBAC.
-- [ ] Persist append-only audit events for privileged and data-changing actions.
-- [ ] Move sessions and rate-limit state to shared production-capable storage.
-- [ ] Define provider-neutral channel event contracts.
-- [ ] Implement webhook signature verification, idempotency, retries, dead-letter handling, and delivery receipts.
-- [ ] Implement consent/opt-out enforcement for outbound communication.
-- [ ] Move AI policy decisions server-side with prompt/model versioning, risk controls, approval flows, cost/latency records, and evaluation suites.
-- [ ] Complete production edge verification for HTTPS, reverse proxy, secure cookies, health, and rollback.
-- [ ] Complete independent security review, load test, backup/restore drill, privacy review, and release sign-off.
+- [ ] Complete durable PostgreSQL application runtime storage with verified migration/cutover/rollback.
+- [ ] Production tenant-aware identity and deny-by-default RBAC.
+- [ ] Append-only audit enforcement for privileged/data-changing actions.
+- [ ] Shared production sessions and rate-limit state.
+- [ ] Provider-neutral channel contracts plus signature verification, idempotency, retries, dead letters, receipts, and consent enforcement.
+- [ ] Server-side governed AI with versioning, risk/approval controls, telemetry, and evaluation suites.
+- [ ] Production edge verification for HTTPS/reverse proxy/secure cookies/health/rollback.
+- [ ] Independent security, load, backup/restore, privacy, canary/rollback, and operational sign-off.
 
 ### P1 — Production capability
-- [ ] Real publicly claimed channel adapters and durable campaign workers.
-- [ ] Multi-touch attribution and reconciliation.
-- [ ] Migration import with dry-run/idempotency/resumability/rollback.
-- [ ] Replay-safe POS/e-commerce adapters.
-- [ ] Metrics, traces, structured logs, SLOs, alerts, incident runbooks.
-- [ ] Tenant-scoped API keys, rotation, revocation, secrets handling.
+- [ ] Real channel adapters and durable campaign workers.
+- [ ] Attribution/reconciliation and replay-safe commerce adapters.
+- [ ] Metrics/traces/logs/SLOs/alerts/runbooks.
+- [ ] Tenant API-key lifecycle and secrets handling.
 - [ ] Export/delete/retention privacy workflows.
 
-### P2 — Product completeness
-- [ ] Persist onboarding/setup state.
-- [ ] Academy enrollment/completion/certificate verification.
-- [ ] Marketplace ownership/publishing/moderation/versioning.
-- [ ] Production-backed analytics/reporting.
-- [ ] Replace or explicitly label remaining UI simulations.
-- [ ] Frontend code splitting/performance budgets.
+### P2/P3 — Completion and polish
+- [ ] Persistent onboarding, Academy, Marketplace, production analytics, and removal/labelling of remaining simulations.
+- [ ] Frontend performance budgets, accessibility, cross-browser/device regression, release/migration/operator documentation, and signed Gold Master evidence.
 
-### P3 — Release polish
-- [ ] Accessibility and cross-browser/device regression.
-- [ ] Documentation consistency audit.
-- [ ] Release/migration notes and operator training.
-- [ ] Signed Gold Master evidence record.
+## 4. Durable-data evidence
 
-## 4. Durable-data progress
-
-Completed with current repository evidence:
-
-- [x] JSON adapter with serialized atomic writes and corrupt-state fail-closed behavior.
-- [x] Express request path wired through an explicit storage boundary.
-- [x] Initial PostgreSQL multi-tenant schema and rollback DDL.
-- [x] Real PostgreSQL migration up/down/replay verification.
-- [x] Forced RLS and non-superuser/NOBYPASSRLS negative tests.
-- [x] Tenant-scoped composite foreign keys and concurrent integrity verification.
-- [x] Real `pg.Pool` transaction adapter with transaction-local tenant context.
-- [x] Authenticated identity/request-to-transaction fail-closed binding.
+Completed bounded foundations:
+- [x] Atomic/fail-closed JSON storage boundary.
+- [x] PostgreSQL schema, migration replay/rollback, forced RLS, tenant relational integrity, and real pool transaction boundary.
+- [x] Authenticated request-to-tenant transaction binding.
 - [x] Tenant-scoped contacts and conversations/messages repositories.
-- [x] Contact → conversation → message integration under PostgreSQL RLS and tenant-scoped relational integrity.
-- [x] Deterministic legacy `/api/chats` compatibility mapper. Evidence: `26906f28c34d74077c3e496d0ddbf1ab21a080fb`, `777af487395161b74fc1be472d1f5ddd448c73fb`, repair `42c1c4995de3f3a22d743f53dd6a630747a32884`, CI `32351874076`.
-- [x] Request-bound legacy chat PostgreSQL runtime. Evidence: `d2440a7d9c6d94fb510a24c92dc68c8dd91bd8af`, `e95d2751804bed7c7a3b9ff055b5108829de8a54`, `81abadeb91261ebeb232ca71d3fed88069f40223`, CI `32357209712`, synchronized-head CI `32357391343`; merged via PR #15 on 2026-08-20.
-- [x] Bounded configuration-gated Express chat message path on draft PR #16. `ZOK_CHAT_STORAGE=json|postgres` defaults to JSON; PostgreSQL mode requires `ZOK_POSTGRES_URL`, uses the request-bound runtime for message reads/writes, and fails closed for missing expected imports. Evidence: gate `6eb110c4008b8fd8646fbd07a9c37d981e639da1`, route integration `7ca81445a222ba901413d95df8b5074a496b94f0`, service-backed API test `542bf524de74d4d87fdee978a38bf61e30fa298f`, CI `32362476402`.
+- [x] Deterministic legacy mapper and request-bound chat runtime.
+- [x] Configuration-gated PostgreSQL message path merged in PR #16.
+- [x] Deterministic import dry-run/replay: CI `32367095289`, synchronized head `32367337923`.
+- [x] Resumable checkpoint/interruption-restart import: CI `32372290510`, synchronized head `32372489874`.
+- [x] Bounded message cutover/rollback regression: CI `32377588551`, synchronized head `32377881739`.
+- [x] Same-tenant/source concurrent-import exclusion: CI `32383484862`, synchronized head `32383857094`.
+- [x] Read-only operational cutover rehearsal: CI `32389535833`, synchronized head `32389896928`.
+- [x] PostgreSQL legacy metadata/unread/tags persistence boundary: `7a7b8c8c56c960b405ab63738b9f1a0648ac5021`, `191bdd028502382f52894c8a8cb5c592686c1bf4`, `b474ad078147d510a49b5bc65c314cd6c7aba259`, `357c58128dce60370e61be1e1a40acaf479f61c5`, service-backed `19852412c602756af826a10c8541265cea10620d`; CI `32393891922`.
+- [x] PostgreSQL-mode chat GET metadata overlay preserving legacy API shape. Strict overlay `4361b376c2c480e6c82a45a7e787496cbffefbfa` exposed compatibility regression CI `32395298787`; repair `b162f4753dd450c92ef0056fe52a3a032e7d06e2` and test `a8b2aab893f9e12b2dbaeae80055dae8f842843a` passed CI `32395415647`.
+- [x] PostgreSQL-mode `/api/chats/:id/read` and `/api/chats/:id/tags` route ownership with rollback-source preservation. Test-first `515cc33c228dcae498d03e52a440ac5af3e2d0e7` failed as expected in CI `32400607666`; implementation `085e024914953e0dd08e336593c8dc5aa07586eb` passed CI `32400811542`.
 
 Still incomplete:
-
-- [ ] Deterministic JSON→PostgreSQL chat import with dry-run, idempotency/replay, resumability, and explicit rollback proof.
-- [ ] Move chat metadata/unread/tags from JSON only after import/cutover evidence is green.
-- [ ] Migrate remaining live resources: campaigns, integrations, AI config, flow state.
-- [ ] Verify complete JSON→PostgreSQL application cutover and rollback.
-- [ ] Verify backup/restore with recorded RPO/RTO.
-- [ ] Replace the configured-admin tenant model with production user/tenant/role resolution and deny-by-default RBAC.
+- [ ] Decide and verify message-side unread/display-time mutation semantics without mixing JSON/PostgreSQL ownership.
+- [ ] Production chat canary/cutover/operator rollback in an authorized deployment environment.
+- [ ] Campaigns/integrations, then AI config/flow-state PostgreSQL migration.
+- [ ] Application-wide PostgreSQL cutover/rollback and backup/restore RPO/RTO.
+- [ ] Production identity/RBAC/audit/shared state and remaining P0 controls.
 
 ## 5. Verification gates
 
-### Gate A
-`npm ci` and `npm audit --omit=dev --audit-level=high` — reproducible install and no unresolved production high/critical vulnerability.
+**Gate A:** `npm ci`; `npm audit --omit=dev --audit-level=high`.  
+**Gate B:** `npm test`; `npm run lint`; `npm run typecheck`.  
+**Gate C:** `npm run build`, production start/health, deployment TLS/secure-cookie checks.  
+**Gate D:** tenant/RBAC review, provider replay/contract evidence, AI evaluations, penetration/remediation, load/capacity, backup restore/RPO/RTO, privacy lifecycle, canary/rollback, operational sign-off.
 
-### Gate B
-`npm test`, `npm run lint`, `npm run typecheck` — security-sensitive negative cases fail closed and static gates remain green.
+Latest implementation CI `32400811542` passed release-document checks, PostgreSQL service/client verification, `npm ci`, tests, lint, typecheck, production build, and production dependency audit.
 
-### Gate C
-`npm run build`, production start/health, and deployment-environment TLS/secure-cookie checks.
+## 6. Current cycle residual boundary
 
-### Gate D
-Tenant/RBAC security review, provider replay/contract evidence, AI evaluations, penetration test/remediation, load/capacity evidence, backup restore drill/RPO/RTO, privacy lifecycle evidence, canary/rollback proof, operational sign-off.
+When `ZOK_CHAT_STORAGE=postgres`, explicit read and tag mutations now use the authenticated request-bound PostgreSQL metadata runtime and return the same legacy chat projection. The service-backed regression verifies those calls do not modify JSON unread/tag fields, preserving the configured rollback snapshot for this slice. JSON mode keeps its existing mutation behavior.
 
-## 6. CI target state
-
-CI enforces release-document presence, PostgreSQL 17 service/client availability, real migrations/RLS/repository integration, `npm ci`, tests, lint, typecheck, build, production dependency audit, least-privilege permissions, and concurrency cancellation. Workflow failures remain release blockers until triaged.
-
-Current route-gate implementation-head evidence: CI `32362476402` completed successfully with every release-verification step green.
+This does **not** resolve simulated/message-side mutations: PostgreSQL message writes still update JSON `time` and the delayed simulated reply still updates JSON `time`/`unread`. No production traffic, deployment canary, operator rollback, unrelated resource migration, application-wide cutover, backup/restore RPO/RTO, production RBAC, or Gate D completion is claimed.
 
 ## 7. Execution order from current head
 
 Unless a security/CI defect supersedes it:
 
-1. Build a deterministic legacy chat JSON→PostgreSQL import command with dry-run and idempotency/replay tests; keep `ZOK_CHAT_STORAGE=json` as default.
-2. Add resumability/cutover and explicit rollback verification for chat import, then widen the gated chat surface only after API/security/migration evidence is green.
-3. Migrate chat metadata/unread/tags, then add PostgreSQL repositories for campaigns and integrations, followed by AI/flow state.
+1. Resolve message-side unread/display-time ownership under PostgreSQL mode with explicit service-backed regression and no JSON mutation for PostgreSQL-owned metadata.
+2. Add production canary/cutover/operator rollback evidence only in an explicitly authorized deployment environment.
+3. Migrate campaigns/integrations, then AI config/flow state.
 4. Complete application-wide JSON→PostgreSQL cutover + rollback and backup/restore evidence.
-5. Implement production tenant-aware user identity, deny-by-default RBAC, append-only audit enforcement, then shared sessions/rate-limit state.
-6. Provider-neutral event + queue/retry/idempotency base and first channel adapter/consent enforcement.
-7. AI policy/evaluation service, privacy lifecycle, observability/load/DR/security exercises.
-8. Product completeness and Gold Master polish.
+5. Implement production tenant identity, deny-by-default RBAC, append-only audit, shared sessions/rate-limit state.
+6. Provider delivery reliability/consent, governed AI, privacy/observability/load/DR/security exercises, product completeness, and Gold Master polish.
 
 Dependabot major-version PRs remain separate until independently compatibility-tested.
 
-## 8. Prior merged durable-data cycles
+## 8. Next safe unit
 
-### PR #6 — foundation
+Move only PostgreSQL-mode message-side unread/display-time metadata effects behind the verified PostgreSQL chat metadata runtime. Add service-backed regression for active/inactive chat unread behavior and display-time projection while proving PostgreSQL-mode message activity no longer mutates the JSON rollback snapshot. Preserve JSON mode, auth/CSRF/input validation/API shape, and do not migrate unrelated resources or claim production canary/cutover evidence.
 
-- Merged PostgreSQL schema/migrations, RLS, transaction-local tenant context, authenticated request binding, normalized repositories, and pure legacy chat mapping.
-- Green synchronized-head CI before merge: `32352025017`.
-- Merge foundation commit recorded as `edbc8ba85a534e49fe3881b24c8a55560671421f`.
-
-### PR #15 — bounded request runtime
-
-- Added exact external-thread lookup and ordered message reads (`d2440a7d9c6d94fb510a24c92dc68c8dd91bd8af`).
-- Added authenticated request → `withRequestTransaction` → normalized conversations runtime (`e95d2751804bed7c7a3b9ff055b5108829de8a54`).
-- Added tenant/input/read/write regression coverage (`81abadeb91261ebeb232ca71d3fed88069f40223`).
-- CI `32357209712` passed release docs, PostgreSQL service/client, `npm ci`, tests, lint, typecheck, build, and production audit; synchronized head also passed `32357391343`.
-- PR #15 merged on 2026-08-20. It did not switch `server.js` to PostgreSQL.
-
-## 9. Current execution cycle — draft PR #16
-
-**Branch:** `feat/postgres-chat-route-gate`  
-**PR:** #16 (draft, open, unmerged)  
-**Base at branch creation:** `66142a5a98229efd6035ffacf184dfb896fbb76f`
-
-Repository state was refreshed before changes. PR #15 was already merged and main had subsequently advanced via separately scoped Dependabot PR #12. Existing open dependency PRs were left outside this P0 implementation track.
-
-Implementation evidence:
-
-- `6eb110c4008b8fd8646fbd07a9c37d981e639da1` adds the explicit chat storage gate. Unsupported modes and PostgreSQL mode without a connection string fail at startup; JSON remains default.
-- `7ca81445a222ba901413d95df8b5074a496b94f0` wires GET `/api/chats` message history and POST `/api/chats/:id/messages` message persistence through the request-bound PostgreSQL runtime when enabled, while preserving authentication, CSRF, validation, legacy response shape, and JSON metadata/unread/tags behavior.
-- Missing expected imported `legacy-chat:<id>` state produces `503` rather than silently falling back to potentially divergent JSON message history.
-- `542bf524de74d4d87fdee978a38bf61e30fa298f` adds a PostgreSQL 17 service-backed API regression using an isolated database and a non-superuser/NOBYPASSRLS application role. It verifies authenticated PostgreSQL reads, CSRF-protected writes, persistence on reread, and the simulated reply path.
-- CI `32362476402` passed release-document checks, PostgreSQL service/client verification, `npm ci`, tests, lint, typecheck, production build, and production dependency audit.
-
-### Residual boundary
-
-The durable-data P0 parent remains unchecked. This is not a production migration or complete live-data cutover. Chat metadata/unread/tags and all non-chat resources remain JSON-backed. PostgreSQL mode assumes required legacy thread data was imported beforehand; deterministic import/dry-run/idempotency/resume/rollback evidence does not yet exist. Backup/restore, production multi-user tenant identity/RBAC, append-only audit enforcement, shared sessions/rate-limit state, provider delivery controls, AI governance, and Gate D are still incomplete.
-
-Local clone/install verification was not available because the automation environment could not resolve `github.com`; no local-pass claim is made. GitHub Actions is the execution evidence for this cycle.
-
-## 10. Next safe unit
-
-Implement deterministic chat JSON→PostgreSQL import as a standalone bounded command with dry-run and idempotency/replay verification against PostgreSQL CI. Do not flip the default storage mode, remove JSON rollback, or widen the live PostgreSQL surface until import and rollback evidence is green.
-
-## 11. Release decision
+## 9. Release decision
 
 **FOUNDATION HARDENED / NOT GOLD MASTER.**
 

@@ -23,6 +23,9 @@ export function mapLegacyChatToNormalized(chat) {
     throw new TypeError('Legacy chat must use a supported channel');
   }
   if (!Array.isArray(chat.messages)) throw new TypeError('Legacy chat messages must be an array');
+  if (chat.unread !== undefined && (!Number.isSafeInteger(chat.unread) || chat.unread < 0)) {
+    throw new TypeError('Legacy chat unread count must be a non-negative integer');
+  }
 
   const details = chat.details && typeof chat.details === 'object' && !Array.isArray(chat.details)
     ? chat.details
@@ -62,6 +65,7 @@ export function mapLegacyChatToNormalized(chat) {
   const phone = optionalTrimmed(details.phone);
   const avatar = optionalTrimmed(chat.avatar);
   const assigned = optionalTrimmed(details.assigned);
+  const displayTime = optionalTrimmed(chat.time);
 
   return {
     contact: {
@@ -75,6 +79,8 @@ export function mapLegacyChatToNormalized(chat) {
         assigned,
         tags: metadataValue(details.tags, []),
         orders: metadataValue(details.orders, []),
+        unread: chat.unread ?? 0,
+        displayTime,
       },
     },
     conversation: {

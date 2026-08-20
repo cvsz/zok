@@ -1,6 +1,6 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { pbkdf2Sync } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
@@ -32,7 +32,7 @@ function cookieValue(setCookieHeader, name) {
   return match[1];
 }
 
-test('configuration-gated chat message API reads and writes through PostgreSQL while preserving JSON rollback default', {
+test('configuration-gated chat API owns messages/read/tags in PostgreSQL while preserving JSON rollback default', {
   skip: databaseUrl ? false : 'ZOK_POSTGRES_TEST_URL is not configured',
 }, async () => {
   const appPassword = 'zok-chat-route-db-password';
@@ -115,6 +115,36 @@ test('configuration-gated chat message API reads and writes through PostgreSQL w
     time: 'Imported',
   }]);
 
+  const rollbackBefore = JSON.parse(await readFile(databaseFile, 'utf8'));
+  assert.equal(rollbackBefore.chats[0].unread, 2);
+  assert.deepEqual(rollbackBefore.chats[0].details.tags, ['New Lead', 'LINE OA', 'Medical Service']);
+
+  const markRead = await fetch(`${baseUrl}/api/chats/1/read`, {
+    method: 'POST',
+    headers: { Cookie: cookies, 'X-CSRF-Token': csrf },
+  });
+  assert.equal(markRead.status, 200);
+  const readChat = await markRead.json();
+  assert.equal(readChat.unread, 0);
+
+  const replaceTags = await fetch(`${baseUrl}/api/chats/1/tags`, {
+    method: 'POST',
+    headers: {
+      Cookie: cookies,
+      'Content-Type': 'application/json',
+      'X-CSRF-Token': csrf,
+    },
+    body: JSON.stringify({ tags: ['  Priority  ', 'Postgres'] }),
+  });
+  assert.equal(replaceTags.status, 200);
+  const taggedChat = await replaceTags.json();
+  assert.deepEqual(taggedChat.details.tags, ['Priority', 'Postgres']);
+  assert.equal(taggedChat.unread, 0);
+
+  const rollbackAfterMetadataWrites = JSON.parse(await readFile(databaseFile, 'utf8'));
+  assert.equal(rollbackAfterMetadataWrites.chats[0].unread, 2);
+  assert.deepEqual(rollbackAfterMetadataWrites.chats[0].details.tags, ['New Lead', 'LINE OA', 'Medical Service']);
+
   const write = await fetch(`${baseUrl}/api/chats/1/messages`, {
     method: 'POST',
     headers: {
@@ -134,6 +164,8 @@ test('configuration-gated chat message API reads and writes through PostgreSQL w
   assert.equal(reread.status, 200);
   const rereadChats = await reread.json();
   assert.equal(rereadChats[0].messages.at(-1).text, 'Persist this in PostgreSQL');
+  assert.equal(rereadChats[0].unread, 0);
+  assert.deepEqual(rereadChats[0].details.tags, ['Priority', 'Postgres']);
 
   await new Promise(resolve => setTimeout(resolve, 1700));
   const afterReply = await fetch(`${baseUrl}/api/chats`, { headers: { Cookie: cookies } });

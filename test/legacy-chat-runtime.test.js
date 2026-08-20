@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createLegacyChatRuntime } from '../server/storage/postgres/legacy-chat-runtime.js';
 
 const tenantId = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb';
+const contactId = 'cccccccc-3333-4333-8333-cccccccccccc';
 const conversationId = 'dddddddd-4444-4444-8444-dddddddddddd';
 
 function createStorageFixture({ found = true } = {}) {
@@ -17,9 +18,12 @@ function createStorageFixture({ found = true } = {}) {
           if (/FROM conversations c\s+WHERE c\.external_thread_id = \$1/i.test(text)) {
             return {
               rows: found
-                ? [{ id: conversationId, contactId: 'cccccccc-3333-4333-8333-cccccccccccc', channel: 'line', externalThreadId: values[0], status: 'open' }]
+                ? [{ id: conversationId, contactId, channel: 'line', externalThreadId: values[0], status: 'open' }]
                 : [],
             };
+          }
+          if (/FROM contacts/i.test(text) && /WHERE id = \$1/i.test(text)) {
+            return { rows: [{ id: contactId, metadata: { legacyChatId: 7, tags: [], unread: 0, displayTime: null } }] };
           }
           if (/FROM messages m/i.test(text)) {
             return { rows: [{ id: 'eeeeeeee-5555-4555-8555-eeeeeeeeeeee', conversationId, direction: 'inbound', senderType: 'customer', body: 'hello' }] };
@@ -43,6 +47,7 @@ test('legacy chat runtime binds authenticated tenant for bounded read and write'
   const readResult = await runtime.read(request, 7);
   assert.equal(readResult.conversation.externalThreadId, 'legacy-chat:7');
   assert.equal(readResult.messages[0].body, 'hello');
+  assert.equal(readResult.metadata.unread, 0);
 
   const written = await runtime.writeMessage(request, 7, { sender: 'bot', text: '  bounded reply  ' });
   assert.equal(written.direction, 'outbound');
@@ -72,4 +77,6 @@ test('legacy chat runtime returns null when legacy thread is not imported', asyn
 
   assert.equal(await runtime.read(request, 99), null);
   assert.equal(await runtime.writeMessage(request, 99, { text: 'hello' }), null);
+  assert.equal(await runtime.markRead(request, 99), null);
+  assert.equal(await runtime.replaceTags(request, 99, ['VIP']), null);
 });

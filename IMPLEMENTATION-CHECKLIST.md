@@ -1,150 +1,91 @@
 # Zok Implementation Checklist
 
-**Last updated:** 2026-08-20  
+**Last updated:** 2026-08-21  
 **Release state:** FOUNDATION HARDENED / NOT GOLD MASTER
 
-This checklist is the operational companion to `exec-planing.md`. Items may be checked only when current repository/runtime evidence exists. A checked bounded slice does not imply its parent production capability is complete.
+Operational companion to `exec-planing.md`. Checkboxes require current evidence; a checked bounded slice does not imply its parent production capability is complete.
 
 ## Foundation already evidenced
 
-- [x] Canonical runtime documented as Vite + React with Express API adapter.
-- [x] Production build command exists.
-- [x] Automated tests exist.
-- [x] Lint and TypeScript checks exist.
-- [x] Production dependency audit is part of CI/release verification.
-- [x] Authenticated request path exists.
-- [x] CSRF/origin controls exist for mutations.
-- [x] Security headers and request-size/rate controls exist.
-- [x] Health endpoint exists.
-- [x] Local JSON writes are serialized and atomic.
-- [x] Unverified UI integrations are not treated as production connections.
+- [x] Vite + React frontend with Express API adapter; production build, tests, lint, typecheck, and production dependency audit.
+- [x] Authentication, CSRF/origin controls, security headers, request-size/rate controls, health endpoint.
+- [x] Serialized atomic JSON persistence and explicit Express storage boundary.
+- [x] PostgreSQL schema, migration rollback/replay, forced RLS, tenant relational integrity, real `pg.Pool`, and transaction-local tenant context.
+- [x] Authenticated request-to-transaction binding fails closed without valid tenant identity.
+- [x] Tenant-scoped contacts and conversations/messages repositories.
 
-## P0 — Gold Master blockers
+## P0 — Durable data platform
 
-### Durable data platform
-- [x] PostgreSQL schema defined for tenants, users, roles, contacts, conversations, messages, campaigns, integrations, consent, sessions, and audit events. Evidence: `001_initial.up.sql`, CI `32330521144`.
-- [x] Migration up/down/replay verified against PostgreSQL. Evidence: CI `32330980037`.
-- [x] PostgreSQL tenant isolation verified using non-superuser `NOBYPASSRLS`. Evidence: CI `32331262316`.
-- [x] Tenant-scoped relational integrity rejects cross-tenant object references. Evidence: CI `32331409295`.
-- [x] Concurrent PostgreSQL uniqueness/integrity verified. Evidence: CI `32331479289`.
-- [x] JSON storage adapter contract implemented and tested.
-- [x] Storage abstraction is the live Express persistence boundary. Evidence: CI `32333372481`.
-- [x] PostgreSQL transaction adapter provides explicit BEGIN/COMMIT/ROLLBACK, transaction-local tenant context, guaranteed release, and pool shutdown. Evidence: CI `32335166312`.
-- [x] Authenticated identities fail closed without a valid tenant UUID before PostgreSQL transaction acquisition. Evidence: red `32337912124`, green `32337964164`.
-- [x] `pg ^8.23.0` has an npm-generated synchronized lockfile and real PostgreSQL 17 pool/RLS integration. Evidence: isolated green `32344957870`.
-- [x] Express configured-admin principal can carry a validated tenant UUID. Evidence: red `32345044007`, green `32345360432`.
-- [x] Request-to-transaction helper fails closed without authenticated tenant identity. Evidence: red `32345449008`, green `32345518040`.
-- [x] PostgreSQL transaction context exposes only the already-validated tenant ID to repository code. Evidence: red `32345984084`, green `32346064982`.
-- [x] Tenant-scoped normalized contacts repository implemented with validation and real PostgreSQL/RLS coverage. Evidence: CI `32346064982`.
-- [x] Tenant-scoped conversations/messages repository implemented with validated channels/directions/sender types. Evidence: red `32346149065`, green `32346242401`.
-- [x] Real PostgreSQL integration verifies contact → conversation → message writes, tenant isolation, and cross-tenant relationship rejection. Evidence: CI `32346343315`.
-- [x] Legacy `/api/chats` compatibility mapping is deterministic and fail closed. Evidence: `26906f28c34d74077c3e496d0ddbf1ab21a080fb`, `777af487395161b74fc1be472d1f5ddd448c73fb`, `42c1c4995de3f3a22d743f53dd6a630747a32884`, CI `32351874076`.
-- [x] Bounded request-bound legacy chat PostgreSQL runtime verified. Evidence: `d2440a7d9c6d94fb510a24c92dc68c8dd91bd8af`, `e95d2751804bed7c7a3b9ff055b5108829de8a54`, `81abadeb91261ebeb232ca71d3fed88069f40223`, CI `32357209712` and synchronized-head CI `32357391343`.
-- [x] Configuration-gated Express chat message read/write path can use PostgreSQL while JSON remains the default/rollback mode. Evidence: gate `6eb110c4008b8fd8646fbd07a9c37d981e639da1`, route integration `7ca81445a222ba901413d95df8b5074a496b94f0`, PostgreSQL service-backed API regression `542bf524de74d4d87fdee978a38bf61e30fa298f`, CI `32362476402`.
-- [ ] All live Express data routes switched from JSON to PostgreSQL with equivalent API regression coverage.
-- [ ] Production JSON→PostgreSQL migration/import supports dry-run, idempotency, resumability, cutover, and verified rollback.
-- [ ] Backup and restore procedure verified with recorded RPO/RTO.
+- [x] Deterministic legacy chat compatibility mapper. Evidence: CI `32351874076`.
+- [x] Request-bound legacy chat PostgreSQL runtime. Evidence: CI `32357209712`, synchronized head `32357391343`.
+- [x] Configuration-gated PostgreSQL chat message read/write path; JSON remains default/rollback. Evidence: CI `32362476402`, synchronized head `32362766907`; PR #16 merge `dc677799cbac6ee793a612330313b1c39f5cc7ca`.
+- [x] Deterministic JSON→PostgreSQL chat import dry-run and replay/idempotency. Evidence: `a94042d1fc5dc2b013261167c26c96c5d433fac2`, `24b10ae585bcd52bc87c0ff7cc20922e00d7ae0f`, `becd258ef396e43732816fdc6d0ae5055c5fe6d8`, `abc559a7593d657a373cd645eea90295268f4ca0`; CI `32367095289`, synchronized head `32367337923`.
+- [x] Source-bound resumable checkpoints and interruption/restart continuation. Evidence: `4ec62fd68bf7a786edc585918a12c23e6f6422f4`, `a3790630253fb095f11c27613d3796f5682d556c`, `7616dfc8eb23cd7fc3bf0b2ea7e2e71fc928cfed`; CI `32372290510`, synchronized head `32372489874`.
+- [x] Bounded cutover/rollback message regression. Evidence: `4376ff02ec5260c5da69cae1bd7a5792644efbf4`; CI `32377588551`, synchronized head `32377881739`.
+- [x] Same-tenant/source competing import exclusion via PostgreSQL advisory lock. Evidence: `e17e7048f2664d20a2b1520635b09d1b716ac413`, `1a9c46472dd67322cc9ad5c3681d3f041c5e168c`, `962e603e66e96ed454a117b05b4d23662f058c1a`; CI `32383484862`, synchronized head `32383857094`.
+- [x] Read-only exact-state cutover rehearsal and byte-preserved JSON rollback snapshot. Evidence: `b82df5aba873238fe5a02ab56360a739a229eb0a`, `6169f08c132345480c02d2f0549c92052b390dad`, `9b9fc95314b9c90190d69913037e08810c44b165`; CI `32389535833`, synchronized head `32389896928`.
+- [x] PostgreSQL persistence boundary for legacy chat metadata/unread/tags. Evidence: `7a7b8c8c56c960b405ab63738b9f1a0648ac5021`, `191bdd028502382f52894c8a8cb5c592686c1bf4`, `b474ad078147d510a49b5bc65c314cd6c7aba259`, `357c58128dce60370e61be1e1a40acaf479f61c5`, service-backed `19852412c602756af826a10c8541265cea10620d`; CI `32393891922`.
+- [x] PostgreSQL-mode `/api/chats` GET metadata overlay preserves legacy response shape. Evidence: regression CI `32395298787`, compatibility repair `b162f4753dd450c92ef0056fe52a3a032e7d06e2`, overlay test `a8b2aab893f9e12b2dbaeae80055dae8f842843a`, green CI `32395415647`.
+- [x] PostgreSQL-mode `/api/chats/:id/read` and `/api/chats/:id/tags` mutate tenant-scoped PostgreSQL metadata while preserving API shape and JSON rollback unread/tag state. Evidence: test-first `515cc33c228dcae498d03e52a440ac5af3e2d0e7` with expected failing CI `32400607666`; implementation `085e024914953e0dd08e336593c8dc5aa07586eb`; green implementation CI `32400811542`.
+- [ ] Message-side unread/display-time ownership migrated and verified without mixed-store side effects.
+- [ ] Production chat cutover/canary and operator rollback in a real authorized deployment.
+- [ ] Campaigns/integrations/AI config/flow state migrated to PostgreSQL.
+- [ ] Application-wide JSON→PostgreSQL cutover and rollback verified.
+- [ ] Backup/restore drill with recorded RPO/RTO.
 
-### Identity and governance
-- [ ] Tenant-aware principal model fully implemented for production multi-user identity. Current bounded evidence: configured admin sessions expose validated `tenantId`; production user/role resolution remains incomplete.
-- [ ] Deny-by-default RBAC implemented.
-- [ ] Field/channel-level authorization tests added where applicable.
-- [ ] Session revocation implemented.
-- [ ] Shared production session store implemented.
-- [ ] Shared production rate-limit state implemented.
-- [ ] Append-only audit events enforced for privileged/data-changing actions.
-- [ ] Audit retention/export controls documented and verified.
+## P0 — Identity and governance
 
-### Channels and messaging
-- [ ] Provider-neutral inbound event contract defined.
-- [ ] Provider-neutral outbound event contract defined.
-- [ ] Webhook signature verification implemented.
-- [ ] Idempotency/replay protection implemented.
-- [ ] Retry/backoff policy implemented.
-- [ ] Dead-letter handling implemented.
-- [ ] Delivery-receipt processing implemented.
-- [ ] Consent/opt-out enforcement implemented.
-- [ ] At least one channel adapter passes provider sandbox contract tests.
+- [ ] Production multi-user tenant-aware identity and membership resolution.
+- [ ] Deny-by-default RBAC plus applicable field/channel authorization tests.
+- [ ] Session revocation and shared production session store.
+- [ ] Shared production rate-limit state.
+- [ ] Append-only audit enforcement plus retention/export controls.
 
-### AI governance
-- [ ] AI decisions moved behind server-side policy enforcement.
-- [ ] Prompt/model versions persisted.
-- [ ] Risk classification and sensitive-action approval implemented.
-- [ ] PII/redaction policy implemented.
-- [ ] Knowledge-source/citation policy implemented where claims require grounding.
-- [ ] Cost and latency telemetry recorded.
-- [ ] Thai evaluation set added.
-- [ ] English evaluation set added.
-- [ ] Adversarial/guardrail evaluation added.
-- [ ] Human escalation/approval audit added.
+## P0 — Channels and messaging
 
-### Production release evidence
-- [ ] HTTPS/reverse-proxy production edge verified.
-- [ ] Secure-cookie behavior verified behind real TLS.
-- [ ] Penetration test completed and findings remediated/accepted.
-- [ ] Load/capacity test completed against agreed SLOs.
-- [ ] Backup restore drill completed with recorded RPO/RTO.
-- [ ] Privacy inventory/consent/export/delete/retention evidence completed.
-- [ ] Production canary and rollback evidence completed.
-- [ ] Operations/support sign-off completed.
+- [ ] Provider-neutral inbound/outbound event contracts.
+- [ ] Webhook signature verification and replay/idempotency protection.
+- [ ] Retry/backoff, dead-letter handling, delivery receipts, reconciliation.
+- [ ] Consent/opt-out enforcement.
+- [ ] At least one real provider sandbox contract suite.
+
+## P0 — AI governance
+
+- [ ] Server-side AI policy enforcement with prompt/model/policy versions.
+- [ ] Risk classification, sensitive-action approval, human escalation, PII/redaction and grounding policy.
+- [ ] Cost/latency telemetry and Thai/English/adversarial/guardrail evaluation suites.
+
+## P0 — Production release evidence
+
+- [ ] HTTPS/reverse-proxy and secure-cookie behavior verified in deployment.
+- [ ] Penetration test/remediation, load/capacity evidence, backup restore/RPO/RTO.
+- [ ] Privacy inventory/consent/export/delete/retention evidence.
+- [ ] Production canary/rollback and operations/support sign-off.
 
 ## P1 — Production capability
 
-- [ ] Durable broadcast/campaign worker implemented.
-- [ ] Publicly claimed channel adapters implemented and contract-tested.
-- [ ] Migration import supports dry-run, resumability, idempotency, and rollback.
-- [ ] Attribution event schema and reconciliation implemented.
-- [ ] POS/e-commerce provider adapters implemented with replay-safe contracts.
-- [ ] Metrics, traces, structured logs, dashboards, alerts, and SLOs implemented.
-- [ ] API key lifecycle (create/rotate/revoke) implemented.
-- [ ] Secrets-management procedure documented and verified.
-- [ ] Data export/delete/retention workflows implemented.
+- [ ] Durable campaign workers and real channel adapters.
+- [ ] Attribution/reconciliation and replay-safe POS/e-commerce adapters.
+- [ ] Metrics, traces, structured logs, dashboards, alerts, SLOs, runbooks.
+- [ ] Tenant API-key create/rotate/revoke and secrets management.
+- [ ] Data export/delete/retention workflows.
 
-## P2 — Product completeness
+## P2/P3 — Product completeness and release polish
 
-- [ ] Onboarding/setup wizard state persisted and resumable.
-- [ ] Academy enrollment/completion implemented.
-- [ ] Certificate verification implemented.
-- [ ] Marketplace ownership/licensing implemented.
-- [ ] Marketplace moderation/versioning implemented.
-- [ ] Production-backed analytics replaces static metrics.
-- [ ] Remaining simulations are clearly labeled sandbox/demo or backed by real services.
-- [ ] Frontend code splitting and performance budgets implemented.
+- [ ] Persistent onboarding, Academy completion/certificates, Marketplace ownership/moderation/versioning.
+- [ ] Production-backed analytics and explicit labeling/removal of remaining simulations.
+- [ ] Frontend code splitting/performance budgets.
+- [ ] Accessibility, cross-browser/device regression, release/migration/operator documentation.
+- [ ] Signed Gold Master evidence record.
 
-## P3 — Final release polish
+## Current PR #17 boundary
 
-- [ ] Accessibility audit completed.
-- [ ] Cross-browser regression suite completed.
-- [ ] Mobile/tablet/desktop regression suite completed.
-- [ ] Documentation consistency audit completed.
-- [ ] Release notes prepared.
-- [ ] Migration/upgrade notes prepared.
-- [ ] Support/operator training material prepared.
-- [ ] Gold Master evidence record signed.
-
-## Merged durable-data baseline — 2026-08-20
-
-- [x] PR #6 merged the PostgreSQL schema/RLS/transaction/repository/legacy-mapping foundation after green CI.
-- [x] PR #15 merged the bounded authenticated request → PostgreSQL legacy chat runtime after green implementation and synchronized-head CI.
-- [x] Main subsequently advanced through separately scoped Dependabot PR #12 to `66142a5a98229efd6035ffacf184dfb896fbb76f` before the current route-gate branch was created.
-- [x] Parent durable-data P0 remains incomplete; merged foundations do not constitute production cutover, import/rollback, or backup/restore evidence.
-
-## Current execution cycle — configuration-gated PostgreSQL chat message path
-
-- [x] Repository and PR inventory refreshed first. PR #15 is merged; remaining pre-existing open PRs are separate Dependabot dependency updates.
-- [x] Created `feat/postgres-chat-route-gate` from main `66142a5a98229efd6035ffacf184dfb896fbb76f`; created draft PR #16 and did not merge it.
-- [x] Added explicit `ZOK_CHAT_STORAGE=json|postgres` gate in `6eb110c4008b8fd8646fbd07a9c37d981e639da1`; PostgreSQL mode requires `ZOK_POSTGRES_URL`, JSON is the default and rollback path.
-- [x] Wired `/api/chats` message reads and `/api/chats/:id/messages` writes through the existing authenticated request-bound PostgreSQL runtime when the gate is enabled in `7ca81445a222ba901413d95df8b5074a496b94f0`.
-- [x] Preserved existing auth/CSRF/input validation and legacy response shape; expected missing imports fail closed instead of silently reading stale JSON messages.
-- [x] Added PostgreSQL service-backed Express API coverage with a non-superuser/NOBYPASSRLS application role in `542bf524de74d4d87fdee978a38bf61e30fa298f`.
-- [x] CI `32362476402` passed release-control document checks, PostgreSQL service/client verification, `npm ci`, tests, lint, typecheck, production build, and production dependency audit.
-- [x] Residual scope is explicit: chat metadata/unread/tags and all non-chat resources remain JSON-backed; no production import/cutover/rollback or backup/restore proof exists.
-- [x] `CHANGELOG.md`, `exec-planing.md`, and `IMPLEMENTATION-CHECKLIST.md` synchronized with implementation evidence, residual risks, and release status.
+PR #17 remains draft/open/unmerged on `feat/postgres-chat-import`, based on main `29f0055d439fda5cf5ac8bab5d8755b371be1817`. PostgreSQL-mode chat GET/read/tag now consumes persisted metadata through the request-bound runtime; JSON remains default/rollback. Message-side unread/display-time effects remain JSON-backed and are intentionally not marked complete.
 
 ## Next bounded unit
 
-- [ ] Implement a deterministic chat JSON→PostgreSQL import command with dry-run and idempotency/replay tests first; verify rollback/cutover prerequisites before widening the gated live-data surface. Keep `ZOK_CHAT_STORAGE=json` as the default until migration evidence is green.
+- [ ] Move only PostgreSQL-mode message-side unread/display-time effects through the verified PostgreSQL metadata runtime, with service-backed active/inactive-chat API regression and proof that PostgreSQL-mode message activity does not mutate the JSON rollback snapshot. Preserve JSON mode and do not migrate unrelated resources.
 
 ## Gold Master rule
 
-Gold Master may be declared only when all P0 items are checked with current evidence and all external Gate D evidence is complete. UI simulations, local mock data, or documentation alone are insufficient evidence.
+Gold Master requires every P0 item to have current evidence and all Gate D evidence to be complete. UI simulations, local mock data, or documentation alone are insufficient.

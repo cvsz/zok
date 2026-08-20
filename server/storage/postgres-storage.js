@@ -49,6 +49,38 @@ export function createPostgresStorage({ pool } = {}) {
     }
   }
 
+  async function withSessionAdvisoryLock(lockKey, operation) {
+    if (typeof lockKey !== 'string' || lockKey.length === 0 || lockKey.length > 512) {
+      throw new TypeError('lockKey is required and must be a non-empty string up to 512 characters');
+    }
+    if (typeof operation !== 'function') {
+      throw new TypeError('operation must be a function');
+    }
+    if (closed) throw new Error('PostgreSQL storage is closed');
+
+    const client = await pool.connect();
+    let acquired = false;
+    try {
+      const lockResult = await client.query(
+        'SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired',
+        [lockKey],
+      );
+      acquired = lockResult.rows[0]?.acquired === true;
+      if (!acquired) {
+        throw new Error('PostgreSQL advisory lock is already held');
+      }
+      return await operation();
+    } finally {
+      if (acquired) {
+        await client.query(
+          'SELECT pg_advisory_unlock(hashtextextended($1, 0))',
+          [lockKey],
+        ).catch(() => undefined);
+      }
+      client.release();
+    }
+  }
+
   async function withIdentityTransaction(identity, operation) {
     if (!identity || typeof identity !== 'object' || Array.isArray(identity)) {
       throw new TypeError('identity with tenantId is required');
@@ -65,5 +97,10 @@ export function createPostgresStorage({ pool } = {}) {
     await pool.end();
   }
 
-  return Object.freeze({ withTenantTransaction, withIdentityTransaction, close });
+  return Object.freeze({
+    withTenantTransaction,
+    withSessionAdvisoryLock,
+    withIdentityTransaction,
+    close,
+  });
 }
