@@ -1,4 +1,17 @@
+import pg from 'pg';
+
+const { Pool } = pg;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function createPostgresPool({ connectionString, max = 10, idleTimeoutMillis = 30_000 } = {}) {
+  if (!connectionString || typeof connectionString !== 'string') {
+    throw new TypeError('connectionString is required');
+  }
+  if (!Number.isSafeInteger(max) || max < 1 || max > 100) {
+    throw new TypeError('max must be an integer between 1 and 100');
+  }
+  return new Pool({ connectionString, max, idleTimeoutMillis });
+}
 
 export function createPostgresStorage({ pool } = {}) {
   if (!pool || typeof pool.connect !== 'function' || typeof pool.end !== 'function') {
