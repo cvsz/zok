@@ -122,7 +122,7 @@ This checklist is the operational companion to `exec-planing.md`. Items may be c
 
 ## Current execution cycle — 2026-08-20 legacy chat compatibility mapping CI repair
 
-- [x] Reused draft PR #6; no duplicate implementation PR created and no merge performed.
+- [x] PR #6 was the only open PR; it was marked ready and squash-merged to `main` as `edbc8ba85a534e49fe3881b24c8a55560671421f` after green CI `32352025017`.
 - [x] Defined a pure compatibility contract before changing any live Express route.
 - [x] Stable IDs are retry-safe: `legacy-chat:<id>` for contact/thread and `legacy-chat:<id>:message:<index>` for legacy messages.
 - [x] Customer messages map inbound; agent messages map outbound; unsupported senders/channels and malformed IDs/text/tags fail closed.
@@ -132,6 +132,11 @@ This checklist is the operational companion to `exec-planing.md`. Items may be c
 - [x] CI `32351874076` passed release-document checks, PostgreSQL service health, `npm ci`, all 24 tests, lint, typecheck, build, and production dependency audit.
 - [x] Parent durable-data P0 remains incomplete: live Express data routes are still JSON-backed; production import/cutover/rollback and backup/restore evidence do not exist.
 - [x] `CHANGELOG.md`, `exec-planing.md`, and `IMPLEMENTATION-CHECKLIST.md` synchronized with the CI failure, repair, green evidence, and residual risks.
+
+## Post-merge execution
+
+- [x] Open PR inventory found no remaining open PRs.
+- [x] All eligible work was merged to `main`; Gold Master blockers remain explicitly unchecked.
 
 ## Next bounded unit
 
