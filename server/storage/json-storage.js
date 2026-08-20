@@ -2,6 +2,35 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 
+function postgresOwnsChatActivityMetadata() {
+  return (process.env.ZOK_CHAT_STORAGE || '').trim().toLowerCase() === 'postgres';
+}
+
+function snapshotChatActivityMetadata(database) {
+  if (!postgresOwnsChatActivityMetadata() || !Array.isArray(database?.chats)) return null;
+  return new Map(database.chats.map(chat => [
+    chat.id,
+    {
+      hasUnread: Object.prototype.hasOwnProperty.call(chat, 'unread'),
+      unread: chat.unread,
+      hasTime: Object.prototype.hasOwnProperty.call(chat, 'time'),
+      time: chat.time,
+    },
+  ]));
+}
+
+function restoreChatActivityMetadata(database, snapshot) {
+  if (!snapshot || !Array.isArray(database?.chats)) return;
+  for (const chat of database.chats) {
+    const previous = snapshot.get(chat.id);
+    if (!previous) continue;
+    if (previous.hasUnread) chat.unread = previous.unread;
+    else delete chat.unread;
+    if (previous.hasTime) chat.time = previous.time;
+    else delete chat.time;
+  }
+}
+
 export function createJsonStorage({ filePath, defaultData, validate }) {
   if (!filePath || typeof filePath !== 'string') {
     throw new TypeError('filePath is required');
@@ -64,7 +93,9 @@ export function createJsonStorage({ filePath, defaultData, validate }) {
 
     const operation = mutationQueue.then(async () => {
       const database = await read();
+      const protectedChatActivity = snapshotChatActivityMetadata(database);
       const result = await mutator(database);
+      restoreChatActivityMetadata(database, protectedChatActivity);
       await atomicWrite(database);
       return result;
     });
