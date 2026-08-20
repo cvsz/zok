@@ -3,7 +3,7 @@
 **Status:** Active release-control ledger  
 **Last updated:** 2026-08-20  
 **Canonical branch:** `main`  
-**Active implementation branch:** `feat/postgres-storage-foundation` / PR #6  
+**Merged implementation:** PR #6 (`edbc8ba85a534e49fe3881b24c8a55560671421f`)  
 **Canonical runtime:** Vite + React frontend with Express API adapter  
 **Release state:** FOUNDATION HARDENED / NOT GOLD MASTER
 
@@ -48,7 +48,7 @@ Live application data path today
   -> serialized atomic JSON persistence
 ```
 
-The PostgreSQL driver, synchronized npm lockfile, real pool, transaction-local tenant context, request binding, contacts repository, conversations/messages repository, and pure legacy-chat compatibility mapping now exist on the implementation branch. The live Express data routes remain JSON-backed. PostgreSQL is not yet the live application store.
+PR #6 is merged to `main` with PostgreSQL schema/migrations, RLS, transaction-local tenant context, request binding, contacts/conversations repositories, and the pure legacy-chat compatibility mapping. The live Express data routes remain JSON-backed. PostgreSQL is not yet the live application store.
 
 ## 3. Master priority queue
 
@@ -151,9 +151,9 @@ Dependabot major-version PRs remain separate until independently compatibility-t
 ## 8. Current execution evidence — 2026-08-20 legacy chat compatibility mapping CI repair
 
 **Branch:** `feat/postgres-storage-foundation`  
-**PR:** #6 (draft)
+**PR:** #6 (merged to `main` as `edbc8ba85a534e49fe3881b24c8a55560671421f`)
 
-- Existing PR #6 was reused; no duplicate implementation PR was created and no merge was performed.
+- Existing PR #6 was reused; no duplicate implementation PR was created. It was marked ready and squash-merged to `main` after green CI.
 - Test-first commit `26906f28c34d74077c3e496d0ddbf1ab21a080fb` defines the compatibility contract before any live route change.
 - Implementation commit `777af487395161b74fc1be472d1f5ddd448c73fb` adds a pure mapper only; it does not alter Express persistence.
 - Stable compatibility keys are `legacy-chat:<id>` for contact/thread identity and `legacy-chat:<id>:message:<index>` for legacy messages.
@@ -172,7 +172,14 @@ The parent durable-data P0 item stays unchecked. Live Express data routes still 
 
 Introduce one configuration-gated bounded PostgreSQL chat read/write path with API/security regression tests, authenticated request → `withRequestTransaction` → normalized repositories, and JSON retained as an explicit rollback path. Do not widen the cutover until the bounded path is green.
 
-## 9. Release decision
+## 9. Post-merge next unit
+
+- [x] Open PR inventory checked: PR #6 was the only open PR.
+- [x] PR #6 had no review threads, was mergeable, and its latest remote head passed CI run `32352025017`.
+- [x] PR #6 was merged to `main` as `edbc8ba85a534e49fe3881b24c8a55560671421f`.
+- [ ] Next: implement the bounded configuration-gated PostgreSQL chat read/write path, then add PostgreSQL service-backed API tests and JSON import/idempotency/rollback evidence.
+
+## 10. Release decision
 
 **FOUNDATION HARDENED / NOT GOLD MASTER.**
 
