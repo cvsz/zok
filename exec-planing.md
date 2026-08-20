@@ -1,7 +1,7 @@
 # Zok Master Execution Plan
 
 **Status:** Active release-control ledger  
-**Last updated:** 2026-08-20  
+**Last updated:** 2026-08-21  
 **Canonical branch:** `main`  
 **Current implementation PR:** #17 (`feat/postgres-chat-import`, draft/unmerged)  
 **Current main baseline:** `29f0055d439fda5cf5ac8bab5d8755b371be1817`  
@@ -27,12 +27,12 @@ Browser -> Vite/React -> Express API -> authenticated principal
   -> transaction-local app.tenant_id -> tenant-scoped repositories
 
 Default live path: ZOK_CHAT_STORAGE=json -> createJsonStorage
-Opt-in message/GET-metadata path: ZOK_CHAT_STORAGE=postgres + ZOK_POSTGRES_URL
+Opt-in chat message/GET/read/tag path: ZOK_CHAT_STORAGE=postgres + ZOK_POSTGRES_URL
 ```
 
 Merged PR #6 provides schema/RLS/transactions/repositories/legacy mapping. PR #15 provides the request-bound legacy chat runtime. PR #16 provides configuration-gated PostgreSQL chat message reads/writes and merged as `dc677799cbac6ee793a612330313b1c39f5cc7ca` after synchronized-head CI `32362766907`.
 
-Draft PR #17 provides deterministic import dry-run/replay, resumable source-bound checkpoints, interruption/restart proof, same-tenant/source advisory-lock exclusion, bounded cutover/rollback regression, read-only exact-state rehearsal, and PostgreSQL persistence for legacy chat metadata/unread/tags. PostgreSQL-mode `/api/chats` now overlays persisted metadata through the request-bound runtime while preserving the legacy response shape. Metadata mutation routes are not yet wired.
+Draft PR #17 provides deterministic import dry-run/replay, resumable source-bound checkpoints, interruption/restart proof, same-tenant/source advisory-lock exclusion, bounded cutover/rollback regression, read-only exact-state rehearsal, PostgreSQL persistence for legacy chat metadata/unread/tags, PostgreSQL GET metadata projection, and PostgreSQL ownership for explicit read/tag mutation routes. Message-side unread/display-time effects remain unresolved and JSON-backed.
 
 ## 3. Master priority queue
 
@@ -72,10 +72,10 @@ Completed bounded foundations:
 - [x] Same-tenant/source concurrent-import exclusion: CI `32383484862`, synchronized head `32383857094`.
 - [x] Read-only operational cutover rehearsal: CI `32389535833`, synchronized head `32389896928`.
 - [x] PostgreSQL legacy metadata/unread/tags persistence boundary: `7a7b8c8c56c960b405ab63738b9f1a0648ac5021`, `191bdd028502382f52894c8a8cb5c592686c1bf4`, `b474ad078147d510a49b5bc65c314cd6c7aba259`, `357c58128dce60370e61be1e1a40acaf479f61c5`, service-backed `19852412c602756af826a10c8541265cea10620d`; CI `32393891922`.
-- [x] PostgreSQL-mode chat GET metadata overlay preserving legacy API shape. Initial strict overlay `4361b376c2c480e6c82a45a7e787496cbffefbfa` exposed an older-fixture compatibility regression in CI `32395298787`; compatibility repair `b162f4753dd450c92ef0056fe52a3a032e7d06e2` and explicit overlay test `a8b2aab893f9e12b2dbaeae80055dae8f842843a` passed implementation CI `32395415647` with 39/39 tests plus lint/typecheck/build/audit.
+- [x] PostgreSQL-mode chat GET metadata overlay preserving legacy API shape. Strict overlay `4361b376c2c480e6c82a45a7e787496cbffefbfa` exposed compatibility regression CI `32395298787`; repair `b162f4753dd450c92ef0056fe52a3a032e7d06e2` and test `a8b2aab893f9e12b2dbaeae80055dae8f842843a` passed CI `32395415647`.
+- [x] PostgreSQL-mode `/api/chats/:id/read` and `/api/chats/:id/tags` route ownership with rollback-source preservation. Test-first `515cc33c228dcae498d03e52a440ac5af3e2d0e7` failed as expected in CI `32400607666`; implementation `085e024914953e0dd08e336593c8dc5aa07586eb` passed CI `32400811542`.
 
 Still incomplete:
-- [ ] Wire `/api/chats/:id/read` and `/api/chats/:id/tags` to PostgreSQL metadata when `ZOK_CHAT_STORAGE=postgres`, with API compatibility and JSON rollback tests.
 - [ ] Decide and verify message-side unread/display-time mutation semantics without mixing JSON/PostgreSQL ownership.
 - [ ] Production chat canary/cutover/operator rollback in an authorized deployment environment.
 - [ ] Campaigns/integrations, then AI config/flow-state PostgreSQL migration.
@@ -89,31 +89,30 @@ Still incomplete:
 **Gate C:** `npm run build`, production start/health, deployment TLS/secure-cookie checks.  
 **Gate D:** tenant/RBAC review, provider replay/contract evidence, AI evaluations, penetration/remediation, load/capacity, backup restore/RPO/RTO, privacy lifecycle, canary/rollback, operational sign-off.
 
-Latest implementation CI `32395415647` passed release-document checks, PostgreSQL service/client verification, `npm ci`, 39 tests, lint, typecheck, production build, and production dependency audit.
+Latest implementation CI `32400811542` passed release-document checks, PostgreSQL service/client verification, `npm ci`, tests, lint, typecheck, production build, and production dependency audit.
 
 ## 6. Current cycle residual boundary
 
-The current slice changes only PostgreSQL-mode GET projection: imported PostgreSQL metadata can now replace JSON avatar/unread/display-time/assignment/tags/orders in the existing `/api/chats` response while messages remain PostgreSQL-backed as before. Older manually-created PostgreSQL fixtures without metadata retain JSON compatibility fields instead of failing unexpectedly.
+When `ZOK_CHAT_STORAGE=postgres`, explicit read and tag mutations now use the authenticated request-bound PostgreSQL metadata runtime and return the same legacy chat projection. The service-backed regression verifies those calls do not modify JSON unread/tag fields, preserving the configured rollback snapshot for this slice. JSON mode keeps its existing mutation behavior.
 
-This does **not** switch `/api/chats/:id/read`, `/api/chats/:id/tags`, or message-side unread/display-time mutations to PostgreSQL. `ZOK_CHAT_STORAGE=json` remains default and explicit rollback. No production traffic, deployment canary, operator rollback, unrelated resource migration, application-wide cutover, backup/restore RPO/RTO, production RBAC, or Gate D completion is claimed.
+This does **not** resolve simulated/message-side mutations: PostgreSQL message writes still update JSON `time` and the delayed simulated reply still updates JSON `time`/`unread`. No production traffic, deployment canary, operator rollback, unrelated resource migration, application-wide cutover, backup/restore RPO/RTO, production RBAC, or Gate D completion is claimed.
 
 ## 7. Execution order from current head
 
 Unless a security/CI defect supersedes it:
 
-1. Wire `/api/chats/:id/read` and `/api/chats/:id/tags` through the verified PostgreSQL runtime under `ZOK_CHAT_STORAGE=postgres`, preserving auth/CSRF/input validation/legacy response shape and JSON default/rollback; add service-backed API and rollback regression.
-2. Resolve message-side unread/display-time ownership with explicit regression evidence.
-3. Add production canary/cutover/operator rollback evidence only in an explicitly authorized deployment environment.
-4. Migrate campaigns/integrations, then AI config/flow state.
-5. Complete application-wide JSON→PostgreSQL cutover + rollback and backup/restore evidence.
-6. Implement production tenant identity, deny-by-default RBAC, append-only audit, shared sessions/rate-limit state.
-7. Provider delivery reliability/consent, governed AI, privacy/observability/load/DR/security exercises, product completeness, and Gold Master polish.
+1. Resolve message-side unread/display-time ownership under PostgreSQL mode with explicit service-backed regression and no JSON mutation for PostgreSQL-owned metadata.
+2. Add production canary/cutover/operator rollback evidence only in an explicitly authorized deployment environment.
+3. Migrate campaigns/integrations, then AI config/flow state.
+4. Complete application-wide JSON→PostgreSQL cutover + rollback and backup/restore evidence.
+5. Implement production tenant identity, deny-by-default RBAC, append-only audit, shared sessions/rate-limit state.
+6. Provider delivery reliability/consent, governed AI, privacy/observability/load/DR/security exercises, product completeness, and Gold Master polish.
 
 Dependabot major-version PRs remain separate until independently compatibility-tested.
 
 ## 8. Next safe unit
 
-Wire only `/api/chats/:id/read` and `/api/chats/:id/tags` through the already verified PostgreSQL metadata runtime when `ZOK_CHAT_STORAGE=postgres`, with service-backed API compatibility and JSON rollback tests. Preserve existing auth/CSRF/input validation and response shape. Do not change message-side metadata semantics, migrate unrelated resources, or claim production canary/cutover evidence in that slice.
+Move only PostgreSQL-mode message-side unread/display-time metadata effects behind the verified PostgreSQL chat metadata runtime. Add service-backed regression for active/inactive chat unread behavior and display-time projection while proving PostgreSQL-mode message activity no longer mutates the JSON rollback snapshot. Preserve JSON mode, auth/CSRF/input validation/API shape, and do not migrate unrelated resources or claim production canary/cutover evidence.
 
 ## 9. Release decision
 
