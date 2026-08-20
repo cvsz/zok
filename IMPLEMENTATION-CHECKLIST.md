@@ -22,14 +22,14 @@ This checklist is the operational companion to `exec-planing.md`. Items may be c
 ## P0 — Gold Master blockers
 
 ### Durable data platform
-- [x] PostgreSQL schema defined for tenants, users, roles, contacts, conversations, messages, campaigns, integrations, consent, sessions, and audit events. Evidence: `server/storage/postgres/migrations/001_initial.up.sql` plus `test/postgres-schema.test.js`; CI run `32330521144` passed.
-- [ ] Migration up/down verification added. Current down DDL is structurally covered, but no real PostgreSQL migration execution/rollback has been run in CI yet.
+- [x] PostgreSQL schema defined for tenants, users, roles, contacts, conversations, messages, campaigns, integrations, consent, sessions, and audit events. Evidence: `server/storage/postgres/migrations/001_initial.up.sql`, `test/postgres-schema.test.js`, CI `32330521144`.
+- [x] Migration up/down verification added against a real PostgreSQL service. Evidence: `.github/workflows/ci.yml`, `scripts/postgres-migrations.js`, `test/postgres-migration-runtime.test.js`; CI `32330980037` executed up, down, replayed up, and final rollback successfully.
 - [ ] Storage abstraction introduced so JSON persistence is no longer production canonical.
 - [x] First storage-boundary slice added: tested JSON adapter contract in `server/storage/json-storage.js` with initialization, serialized concurrent updates, atomic write cleanup, and corrupt-state fail-closed coverage in `test/storage.test.js`.
 - [ ] Wire the Express request path to the storage adapter without behavior regressions.
-- [ ] Introduce PostgreSQL adapter/runtime migration execution and switch production persistence away from JSON.
-- [ ] Tenant-isolation tests added.
-- [ ] Concurrent write/integrity tests added for durable storage.
+- [ ] Introduce PostgreSQL runtime adapter/connection pooling/transaction boundaries and switch production persistence away from JSON.
+- [ ] Tenant-isolation runtime tests added.
+- [ ] Concurrent write/integrity tests added for PostgreSQL durable storage.
 - [ ] Backup and restore procedure verified.
 
 ### Identity and governance
@@ -109,17 +109,17 @@ This checklist is the operational companion to `exec-planing.md`. Items may be c
 - [ ] Support/operator training material prepared.
 - [ ] Gold Master evidence record signed.
 
-## Current execution cycle — 2026-08-20 PostgreSQL schema slice
+## Current execution cycle — 2026-08-20 PostgreSQL runtime migration slice
 
-- [x] Inspected `main`, open PRs, PR #6, and the current CI state before selecting work.
-- [x] Reused existing draft PR #6; no additional PR was created.
-- [x] Selected the next safe bounded P0 durable-data unit: define the initial PostgreSQL schema contract without claiming runtime migration/cutover.
-- [x] Added `test/postgres-schema.test.js` before the migration files.
-- [x] TDD red confirmed: CI run `32330472344` failed on missing `001_initial.up.sql` / `001_initial.down.sql`, while existing API hardening and JSON storage tests passed.
-- [x] Added `001_initial.up.sql` defining tenant-scoped tables, foreign keys, scoped uniqueness, field constraints, and indexes for the required data model.
-- [x] Added `001_initial.down.sql` with explicit reverse teardown coverage.
-- [x] Green verification recorded: CI run `32330521144` passed release-control checks, `npm ci`, tests, lint, typecheck, build, and production dependency audit.
-- [x] Residual risk recorded: `server.js` still uses live JSON persistence; PostgreSQL migrations have not been executed against a real server; no PostgreSQL adapter/cutover or tenant-isolation runtime tests exist yet.
+- [x] Inspected `main`, open PRs, active PR #6, and CI before selecting work.
+- [x] Reused existing draft PR #6; Dependabot major-version PRs remain isolated from P0 implementation work.
+- [x] Selected highest-priority safe unit: real PostgreSQL migration up/down verification in CI.
+- [x] Added `test/postgres-migration-runtime.test.js` before the executor implementation.
+- [x] TDD red confirmed: CI `32330868918` provisioned a healthy PostgreSQL 17 service and failed on intentionally absent `scripts/postgres-migrations.js`; all pre-existing tests remained green.
+- [x] Added minimal migration executor with fail-fast `psql` invocation and single-transaction migration execution.
+- [x] Corrected stdin-based invocation before completion so migrations execute from explicit repository file paths.
+- [x] Green verification confirmed: CI `32330980037` passed migration up/down/replay, all tests, lint, typecheck, build, and production dependency audit.
+- [x] Residual risk recorded: `server.js` still uses live JSON persistence; no PostgreSQL runtime adapter/pool/transaction cutover or tenant-isolation runtime enforcement exists yet.
 - [x] `CHANGELOG.md` updated.
 - [x] `exec-planing.md` updated for current cycle evidence/status.
 - [x] `IMPLEMENTATION-CHECKLIST.md` updated.
