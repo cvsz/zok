@@ -40,7 +40,7 @@ Browser
 
 Current repository evidence already supports a hardened sandbox foundation: authenticated request paths, CSRF/origin protection, security headers, rate limiting, atomic JSON writes, health checks, lint/typecheck/build/test gates, and production dependency audit.
 
-The current architecture is not yet horizontally scalable, multi-tenant, provider-integrated, or enterprise-governed.
+The current architecture is not yet horizontally scalable, multi-tenant, provider-integrated, or enterprise-governed. An initial PostgreSQL schema contract now exists in the branch, but it is not wired into the runtime and has not been executed against a real PostgreSQL service in CI.
 
 ---
 
@@ -216,22 +216,31 @@ At the end of every cycle, synchronize `CHANGELOG.md`, this file, and `IMPLEMENT
 
 ---
 
-## 10. Active execution cycle — 2026-08-20 durable-storage foundation
+## 10. Active execution cycle — 2026-08-20 PostgreSQL schema slice
 
 **Branch:** `feat/postgres-storage-foundation`
 **PR:** #6 (draft)
-**Selected bounded unit:** establish a tested JSON storage adapter contract before wiring the live Express request path and before adding PostgreSQL.
+**Selected bounded unit:** define the initial PostgreSQL schema contract required by the P0 durable-data platform without claiming runtime migration execution, PostgreSQL adapter wiring, tenant isolation, or production cutover.
 
-### Evidence so far
+### Evidence
 
-1. Added `test/storage.test.js` first.
-2. First CI run (`Zok Release Verification CI` run 32329601944) failed at `npm test` with `ERR_MODULE_NOT_FOUND` for the intentionally absent `server/storage/json-storage.js`, while the existing server hardening test passed.
-3. Added the minimal `server/storage/json-storage.js` implementation only after confirming the red test.
-4. The adapter preserves the existing local safety properties: initialization from default state, serialized mutations, atomic rename writes, temporary-file cleanup, and corrupt-state fail-closed reads.
+1. Inspected `main`, all open PRs, PR #6, and CI before selecting work. PR #6 was already the active durable-storage branch and its previous head CI run `32329765447` was green, so this run reused that PR instead of creating another.
+2. Added `test/postgres-schema.test.js` before the migration files. The contract requires tables for tenants, roles, users, user-role membership, contacts, conversations, messages, campaigns, integrations, consent records, sessions, and audit events; tenant ownership foreign keys; scoped uniqueness; constrained message direction/campaign status; and explicit down-migration teardown coverage.
+3. TDD red was confirmed in CI run `32330472344`: the new tests failed with `ENOENT` for the intentionally absent `001_initial.up.sql` and `001_initial.down.sql`, while the existing API hardening and JSON storage tests passed.
+4. Added `server/storage/postgres/migrations/001_initial.up.sql` with UUID primary keys, tenant-scoped foreign keys, scoped uniqueness constraints, domain checks, timestamps, and supporting indexes for the required initial data model.
+5. Added `server/storage/postgres/migrations/001_initial.down.sql` with explicit reverse-order table teardown.
+6. Green verification was confirmed by CI run `32330521144`, which passed release-control document checks, `npm ci`, `npm test`, `npm run lint`, `npm run typecheck`, `npm run build`, and `npm audit --omit=dev --audit-level=high`.
+
+### Status recorded this cycle
+
+- PostgreSQL schema definition is complete at the repository-contract level and is marked complete in `IMPLEMENTATION-CHECKLIST.md`.
+- The parent P0 item "Replace local JSON persistence with durable PostgreSQL storage and migrations" remains unchecked.
+- `Migration up/down verification added` remains unchecked because the SQL has not been executed and rolled back against a real PostgreSQL server in CI.
 
 ### Residual risk / incomplete scope
 
-- `server.js` still owns and uses its existing JSON persistence functions; the new adapter is not wired into the live request path yet.
-- PostgreSQL schema, migrations, adapter, transaction behavior, tenant scoping, backup/restore, and production cutover remain incomplete.
-- Therefore the parent P0 item "Replace local JSON persistence with durable PostgreSQL storage and migrations" remains unchecked.
-- The next bounded unit is to wire `server.js` to the adapter with no API behavior regression, then proceed to PostgreSQL schema/migrations.
+- `server.js` still owns and uses the live JSON persistence path; the storage adapter is not wired into the Express request path.
+- The PostgreSQL migration pair has structural regression coverage only; no real PostgreSQL service has executed the up/down migration in this repository's CI evidence.
+- No PostgreSQL runtime adapter, transaction implementation, connection pooling, tenant-isolation runtime tests, backup/restore evidence, or production cutover exists yet.
+- Dependabot major-version PRs remain separate and were not merged or mixed into this P0 storage work.
+- The next safe durable-data unit is runtime migration up/down verification against PostgreSQL if CI infrastructure can support it; otherwise wire `server.js` to the existing storage abstraction without changing API behavior.
