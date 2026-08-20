@@ -45,6 +45,25 @@ function metadataFromContact(contact) {
   return metadata;
 }
 
+function activeLegacyChatId(request, fallbackId) {
+  const value = request?.body?.activeChatId;
+  if (value === undefined) return fallbackId;
+  const parsed = parseLegacyChatId(value);
+  if (parsed === null) throw new TypeError('activeChatId must be a positive integer');
+  return parsed;
+}
+
+function messageActivityMetadata(metadata, messageInput, activeChatId, chatId) {
+  const next = { ...metadata, displayTime: 'Just now' };
+  if (messageInput.direction !== 'inbound') return next;
+
+  const currentUnread = Number.isSafeInteger(metadata.unread) && metadata.unread >= 0
+    ? metadata.unread
+    : 0;
+  next.unread = activeChatId === chatId ? 0 : currentUnread + 1;
+  return next;
+}
+
 export function createLegacyChatRuntime({ storage } = {}) {
   if (!storage || typeof storage.withIdentityTransaction !== 'function') {
     throw new TypeError('PostgreSQL storage is required');
@@ -77,13 +96,22 @@ export function createLegacyChatRuntime({ storage } = {}) {
     const parsedId = parseLegacyChatId(legacyChatId);
     if (parsedId === null) throw new TypeError('Legacy chat id must be a positive integer');
     const messageInput = normalizeMessageInput(input);
+    const activeChatId = activeLegacyChatId(request, parsedId);
     const externalThreadId = `legacy-chat:${parsedId}`;
 
     return withRequestTransaction(storage, request, async tx => {
-      const conversations = createConversationsRepository(tx);
-      const conversation = await conversations.findByExternalThreadId(externalThreadId);
-      if (!conversation) return null;
-      return conversations.addMessage(conversation.id, messageInput);
+      const state = await findState(tx, externalThreadId);
+      if (!state) return null;
+      const written = await state.conversations.addMessage(state.conversation.id, messageInput);
+      const metadata = messageActivityMetadata(
+        metadataFromContact(state.contact),
+        messageInput,
+        activeChatId,
+        parsedId,
+      );
+      const updatedContact = await state.contacts.replaceMetadata(state.contact.id, metadata);
+      if (!updatedContact) throw new Error('PostgreSQL chat contact is unavailable');
+      return written;
     });
   }
 
