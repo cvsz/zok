@@ -25,14 +25,14 @@
     "express": "^5.2.1",
     "lucide-react": "^1.31.0",
     "pg": "^8.23.0",
-    "react": "^18.3.1",
+    "react": "^19.2.8",
     "react-dom": "^18.3.1",
     "recharts": "^2.12.7",
     "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
-    "@types/react": "^18.3.2",
+    "@types/react": "^19.2.18",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^6.0.4",
     "autoprefixer": "^10.4.19",
