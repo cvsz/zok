@@ -62,7 +62,8 @@ test('maps one legacy aggregate into stable normalized repository inputs', () =>
 });
 
 test('mapping is deterministic for retry-safe legacy identifiers', () => {
-  assert.deepEqual(mapLegacyChatToNormalized(legacyChat), mapLegacyChatToNormalized(structuredClone(legacyChat)));
+  const clonedLegacyChat = JSON.parse(JSON.stringify(legacyChat));
+  assert.deepEqual(mapLegacyChatToNormalized(legacyChat), mapLegacyChatToNormalized(clonedLegacyChat));
 });
 
 test('fails closed on unsupported or malformed legacy records', () => {
