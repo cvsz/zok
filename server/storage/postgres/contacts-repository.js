@@ -52,5 +52,34 @@ export function createContactsRepository(tx) {
     return result.rows[0];
   }
 
-  return Object.freeze({ list, create });
+  async function findById(id) {
+    if (typeof id !== 'string' || !UUID_PATTERN.test(id)) {
+      throw new TypeError('Valid contact id is required');
+    }
+    const result = await tx.query(`
+      SELECT id, name, email, phone, external_id AS "externalId", metadata, created_at AS "createdAt", updated_at AS "updatedAt"
+      FROM contacts
+      WHERE id = $1
+      LIMIT 1
+    `, [id]);
+    return result.rows[0] || null;
+  }
+
+  async function replaceMetadata(id, metadata) {
+    if (typeof id !== 'string' || !UUID_PATTERN.test(id)) {
+      throw new TypeError('Valid contact id is required');
+    }
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+      throw new TypeError('Contact metadata must be an object');
+    }
+    const result = await tx.query(`
+      UPDATE contacts
+      SET metadata = $2::jsonb, updated_at = now()
+      WHERE id = $1
+      RETURNING id, name, email, phone, external_id AS "externalId", metadata, created_at AS "createdAt", updated_at AS "updatedAt"
+    `, [id, JSON.stringify(metadata)]);
+    return result.rows[0] || null;
+  }
+
+  return Object.freeze({ list, create, findById, replaceMetadata });
 }
