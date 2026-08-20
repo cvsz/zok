@@ -38,7 +38,7 @@ This checklist is the operational companion to `exec-planing.md`. Items may be c
 - [x] Tenant-scoped normalized contacts repository implemented with validation and real PostgreSQL/RLS coverage. Evidence: repository red `32345736541`; test-harness defect isolated in `32345808587`; transaction/runtime green `32346064982`.
 - [x] Tenant-scoped conversations/messages repository implemented with validated channels/directions/sender types. Evidence: red `32346149065`, green `32346242401`.
 - [x] Real PostgreSQL 17 integration verifies contact → conversation → message writes for tenant A, no conversation visibility for tenant B, and database rejection of cross-tenant contact references. Evidence: CI `32346343315`.
-- [x] Legacy `/api/chats` aggregate compatibility mapping is explicit and deterministic: stable legacy contact/thread/message IDs, sender→direction mapping, metadata preservation, and fail-closed malformed-input handling. Evidence: test-first commit `26906f28c34d74077c3e496d0ddbf1ab21a080fb`, implementation `777af487395161b74fc1be472d1f5ddd448c73fb`; synchronized-head CI still required before route cutover.
+- [x] Legacy `/api/chats` aggregate compatibility mapping is explicit and deterministic: stable legacy contact/thread/message IDs, sender→direction mapping, metadata preservation, and fail-closed malformed-input handling. Evidence: test-first commit `26906f28c34d74077c3e496d0ddbf1ab21a080fb`, implementation `777af487395161b74fc1be472d1f5ddd448c73fb`, mapper CI repair `42c1c4995de3f3a22d743f53dd6a630747a32884`, green CI `32351874076`.
 - [ ] Live Express data routes switched from JSON to PostgreSQL with equivalent API regression coverage.
 - [ ] Production JSON→PostgreSQL data migration/cutover and rollback procedure verified.
 - [ ] Backup and restore procedure verified with recorded RPO/RTO.
@@ -120,16 +120,22 @@ This checklist is the operational companion to `exec-planing.md`. Items may be c
 - [ ] Support/operator training material prepared.
 - [ ] Gold Master evidence record signed.
 
-## Current execution cycle — 2026-08-20 legacy chat compatibility mapping
+## Current execution cycle — 2026-08-20 legacy chat compatibility mapping CI repair
 
 - [x] Reused draft PR #6; no duplicate implementation PR created and no merge performed.
 - [x] Defined a pure compatibility contract before changing any live Express route.
 - [x] Stable IDs are retry-safe: `legacy-chat:<id>` for contact/thread and `legacy-chat:<id>:message:<index>` for legacy messages.
 - [x] Customer messages map inbound; agent messages map outbound; unsupported senders/channels and malformed IDs/text/tags fail closed.
 - [x] Legacy display-only time labels remain metadata and are not promoted to invented timestamps.
+- [x] CI `32346860728` passed all 24 tests but exposed one lint regression: `structuredClone` was not declared in the repository ESLint environment.
+- [x] Fix commit `42c1c4995de3f3a22d743f53dd6a630747a32884` changed only the test-fixture clone to JSON round-trip semantics; mapper production behavior was unchanged.
+- [x] CI `32351874076` passed release-document checks, PostgreSQL service health, `npm ci`, all 24 tests, lint, typecheck, build, and production dependency audit.
 - [x] Parent durable-data P0 remains incomplete: live Express data routes are still JSON-backed; production import/cutover/rollback and backup/restore evidence do not exist.
-- [ ] Synchronized-head CI evidence for this slice. GitHub had not exposed a workflow run for the new head at document-sync time; do not treat the mapper as route-cutover evidence until CI is green.
-- [x] `CHANGELOG.md`, `exec-planing.md`, and `IMPLEMENTATION-CHECKLIST.md` synchronized for source-level scope and residual risks.
+- [x] `CHANGELOG.md`, `exec-planing.md`, and `IMPLEMENTATION-CHECKLIST.md` synchronized with the CI failure, repair, green evidence, and residual risks.
+
+## Next bounded unit
+
+- [ ] Introduce one configuration-gated PostgreSQL chat read/write path through authenticated request → `withRequestTransaction` → normalized repositories, preserve existing auth/CSRF/validation behavior, and retain JSON as the explicit rollback path until migration/cutover evidence is green.
 
 ## Gold Master rule
 
