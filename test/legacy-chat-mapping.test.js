@@ -36,6 +36,8 @@ test('maps one legacy aggregate into stable normalized repository inputs', () =>
         assigned: 'Sarah Connor',
         tags: ['VIP', 'LINE OA'],
         orders: [{ id: 'ORD-1', total: '$10.00' }],
+        unread: 2,
+        displayTime: '10:24 AM',
       },
     },
     conversation: {
@@ -69,6 +71,7 @@ test('mapping is deterministic for retry-safe legacy identifiers', () => {
 test('fails closed on unsupported or malformed legacy records', () => {
   assert.throws(() => mapLegacyChatToNormalized({ ...legacyChat, id: '42' }), /positive integer/);
   assert.throws(() => mapLegacyChatToNormalized({ ...legacyChat, channel: 'sms' }), /supported channel/);
+  assert.throws(() => mapLegacyChatToNormalized({ ...legacyChat, unread: -1 }), /unread count/);
   assert.throws(() => mapLegacyChatToNormalized({ ...legacyChat, messages: [{ sender: 'bot', text: 'x' }] }), /supported sender/);
   assert.throws(() => mapLegacyChatToNormalized({ ...legacyChat, messages: [{ sender: 'customer', text: '   ' }] }), /message text/);
   assert.throws(() => mapLegacyChatToNormalized({ ...legacyChat, details: { ...legacyChat.details, tags: 'VIP' } }), /tags/);
@@ -78,4 +81,5 @@ test('does not invent timestamps from display-only legacy time labels', () => {
   const mapped = mapLegacyChatToNormalized(legacyChat);
   assert.equal('sentAt' in mapped.messages[0], false);
   assert.deepEqual(mapped.messages[0].metadata, { legacyTime: '10:20 AM' });
+  assert.equal(mapped.contact.metadata.displayTime, '10:24 AM');
 });
