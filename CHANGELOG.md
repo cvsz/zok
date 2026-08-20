@@ -9,6 +9,7 @@ The format follows Keep a Changelog principles and uses calendar dates while the
 ### Added
 - `IMPLEMENTATION-CHECKLIST.md` as the evidence-based operational release checklist.
 - `server/storage/json-storage.js` and `test/storage.test.js` as the tested local storage-boundary foundation.
+- `test/storage-boundary-wiring.test.js` as the architecture regression contract proving the Express runtime delegates persistence through the storage adapter.
 - Initial PostgreSQL schema and rollback migrations in `server/storage/postgres/migrations/001_initial.*.sql` for tenants, roles/users, contacts/conversations/messages, campaigns, integrations, consent, sessions, and audit events.
 - `test/postgres-schema.test.js` as the structural schema contract.
 - PostgreSQL 17 service-backed CI migration execution via `scripts/postgres-migrations.js` and `test/postgres-migration-runtime.test.js`.
@@ -22,6 +23,7 @@ The format follows Keep a Changelog principles and uses calendar dates while the
 - `.github/workflows/ci.yml` provisions a health-checked PostgreSQL 17 service while retaining least-privilege permissions, concurrency cancellation, document checks, tests, lint, typecheck, build, and production dependency audit.
 - PostgreSQL migrations now execute and roll back against a real database in CI; this does not yet mean the live Express runtime uses PostgreSQL.
 - Durable-data security now has both RLS isolation and tenant-scoped relational-integrity enforcement at the database layer.
+- `server.js` no longer owns filesystem persistence internals; its `readDB()`/`updateDB()` path delegates to the tested `createJsonStorage` adapter. The live adapter remains JSON-backed pending PostgreSQL application-adapter work.
 
 ### Verification evidence
 - JSON adapter TDD red: CI `32329601944`; subsequent adapter verification green.
@@ -30,10 +32,11 @@ The format follows Keep a Changelog principles and uses calendar dates while the
 - Tenant RLS TDD red: CI `32331153421`; non-superuser tenant-isolation green: CI `32331262316`.
 - Tenant relational-integrity TDD red: CI `32331342959`; composite-FK enforcement green: CI `32331409295`.
 - Concurrent PostgreSQL integrity: CI `32331479289` passed with exactly one successful write among 12 competing inserts for the same tenant/email key, followed by all lint/typecheck/build/audit gates.
+- Express storage-boundary TDD red: CI `32333253897`; green: CI `32333372481` passed the new architecture test, existing API regression tests, PostgreSQL tests, lint, typecheck, build, and production dependency audit.
 
 ### Release status
 - FOUNDATION HARDENED / NOT GOLD MASTER.
-- Parent P0 durable PostgreSQL cutover remains incomplete: `server.js` still owns the live JSON request path and no production PostgreSQL application adapter, connection pool, transaction boundary, production cutover, or verified backup/restore drill exists yet.
+- Parent P0 durable PostgreSQL cutover remains incomplete: the live Express boundary now uses an explicit adapter, but that adapter is still JSON-backed and no production PostgreSQL application pool, transaction-scoped tenant context, cutover/rollback, or verified backup/restore drill exists yet.
 
 ## [2026-08-10]
 
