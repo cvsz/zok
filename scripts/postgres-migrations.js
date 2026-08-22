@@ -63,6 +63,14 @@ export async function rollbackSyncLogsMigration(databaseUrl) {
   await executeMigrationFile(databaseUrl, '004_sync_logs_and_idempotency.down.sql');
 }
 
+export async function applyRateLimitRecordsMigration(databaseUrl) {
+  await executeMigrationFile(databaseUrl, '005_rate_limit_records.up.sql');
+}
+
+export async function rollbackRateLimitRecordsMigration(databaseUrl) {
+  await executeMigrationFile(databaseUrl, '005_rate_limit_records.down.sql');
+}
+
 export async function executeSql(databaseUrl, sql) {
   await runPsql(databaseUrl, ['--quiet', '--command', sql]);
 }

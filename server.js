@@ -21,6 +21,12 @@ import { createUsersRepository } from './server/storage/postgres/users-repositor
 import { createRbacMiddleware, requirePermission } from './server/storage/postgres/rbac-middleware.js';
 import { createAuditService } from './server/storage/postgres/audit-service.js';
 import { createAuditMiddleware } from './server/storage/postgres/audit-middleware.js';
+import { createIdempotencyStore } from './server/channels/idempotency-store.js';
+import { createConsentChecker } from './server/channels/consent-checker.js';
+import { verifyWebhookSignature, getExpectedSignatureHeader } from './server/channels/webhook-verifier.js';
+import { validateInboundEvent, buildIdempotencyKey, INBOUND_EVENT_TYPES } from './server/channels/channel-contracts.js';
+import { hashToken } from './server/storage/postgres/session-store.js';
+import { createRateLimitStore } from './server/storage/postgres/rate-limit-store.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,6 +39,8 @@ const IS_PRODUCTION = NODE_ENV === 'production';
 const CHAT_STORAGE_MODE = (process.env.ZOK_CHAT_STORAGE || 'json').trim().toLowerCase();
 const CHAT_POSTGRES_URL = (process.env.ZOK_POSTGRES_URL || '').trim();
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SESSION_STORE_MODE = (process.env.ZOK_SESSION_STORE || 'memory').trim().toLowerCase();
+const RATE_LIMIT_STORE = (process.env.ZOK_RATE_LIMIT_STORE || 'memory').trim().toLowerCase();
 
 function boundedInteger(value, fallback, minimum, maximum) {
   const parsed = Number(value);
@@ -162,47 +170,106 @@ function clearAuthCookies(res) {
   ]);
 }
 
-function sessionFromRequest(req) {
-  pruneExpiredSessions();
-  const token = parseCookies(req).zok_session;
-  if (!token) return null;
-
-  const session = sessions.get(token);
-  if (!session || session.expiresAt <= Date.now()) {
-    if (session) sessions.delete(token);
-    return null;
+async function getSession(token) {
+  if (sessionStore) {
+    return sessionStore.get(token);
   }
-
-  return session;
+  return sessions.get(token) || null;
 }
 
-function pruneExpiredSessions(now = Date.now()) {
+async function deleteSession(token) {
+  if (sessionStore) {
+    return sessionStore.delete(token);
+  }
+  sessions.delete(token);
+}
+
+async function pruneExpiredSessions() {
+  if (sessionStore) {
+    return sessionStore.pruneExpired();
+  }
+  const now = Date.now();
   for (const [token, session] of sessions) {
     if (session.expiresAt <= now) sessions.delete(token);
   }
 }
 
+async function sessionFromRequest(req) {
+  await pruneExpiredSessions();
+  const cookies = parseCookies(req);
+  const token = cookies.zok_session;
+  if (!token) return null;
+
+  let session;
+  try {
+    session = await getSession(token);
+  } catch {
+    return null;
+  }
+  if (!session || session.expiresAt <= Date.now()) {
+    if (session) {
+      try { await deleteSession(token); } catch {}
+    }
+    return null;
+  }
+
+  if (sessionStore) {
+    const csrfToken = cookies.zok_csrf;
+    if (!csrfToken) return null;
+    try {
+      if (hashToken(csrfToken) !== session.csrfTokenHash) {
+        await deleteSession(token);
+        return null;
+      }
+    } catch {
+      return null;
+    }
+    return { ...session, csrfToken };
+  }
+
+  return session;
+}
+
 function rateLimit({ windowMs, max }) {
-  return (req, res, next) => {
+  return async (req, res, next) => {
     const key = `${req.ip || 'unknown'}:${req.path}`;
     const now = Date.now();
-    const existing = rateLimitBuckets.get(key);
-    const bucket = existing && existing.expiresAt > now
-      ? existing
-      : { count: 0, expiresAt: now + windowMs };
+    let allowed = true;
+    let remaining = max;
+    let retryAfter = 0;
 
-    bucket.count += 1;
-    rateLimitBuckets.set(key, bucket);
-    if (rateLimitBuckets.size > 10000) {
-      for (const [bucketKey, bucketValue] of rateLimitBuckets) {
-        if (bucketValue.expiresAt <= now) rateLimitBuckets.delete(bucketKey);
+    if (rateLimitStore) {
+      try {
+        const result = await rateLimitStore.check(key, windowMs, max);
+        allowed = result.allowed;
+        remaining = result.remaining;
+        retryAfter = result.retryAfter;
+      } catch (error) {
+        console.error('[rate-limit] store error:', error.message);
       }
-    }
-    res.setHeader('RateLimit-Limit', max);
-    res.setHeader('RateLimit-Remaining', Math.max(0, max - bucket.count));
+    } else {
+      const existing = rateLimitBuckets.get(key);
+      const bucket = existing && existing.expiresAt > now
+        ? existing
+        : { count: 0, expiresAt: now + windowMs };
 
-    if (bucket.count > max) {
-      res.setHeader('Retry-After', Math.ceil((bucket.expiresAt - now) / 1000));
+      bucket.count += 1;
+      rateLimitBuckets.set(key, bucket);
+      if (rateLimitBuckets.size > 10000) {
+        for (const [bucketKey, bucketValue] of rateLimitBuckets) {
+          if (bucketValue.expiresAt <= now) rateLimitBuckets.delete(bucketKey);
+        }
+      }
+      remaining = Math.max(0, max - bucket.count);
+      retryAfter = bucket.count > max ? Math.ceil((bucket.expiresAt - now) / 1000) : 0;
+      allowed = bucket.count <= max;
+    }
+
+    res.setHeader('RateLimit-Limit', max);
+    res.setHeader('RateLimit-Remaining', remaining);
+
+    if (!allowed) {
+      res.setHeader('Retry-After', retryAfter);
       return res.status(429).json({ error: 'Too many requests' });
     }
 
@@ -239,7 +306,7 @@ function sameOriginOrAllowed(req) {
   return !origin || ALLOWED_ORIGINS.has(origin);
 }
 
-function requireAuth(req, res, next) {
+async function requireAuth(req, res, next) {
   const publicPaths = ['/health', '/auth/config'];
   const publicMethods = {
     '/auth/login': 'POST',
@@ -254,7 +321,7 @@ function requireAuth(req, res, next) {
     return res.status(503).json({ error: 'Authentication is not configured' });
   }
 
-  const session = sessionFromRequest(req);
+  const session = await sessionFromRequest(req);
   if (!session) return res.status(401).json({ error: 'Authentication required' });
   req.session = session;
   req.user = session.user;
@@ -309,7 +376,29 @@ app.use(cors({
   },
 }));
 app.use('/api', rateLimit({ windowMs: 60_000, max: 180 }));
+app.use('/api/webhooks', express.raw({ type: 'application/json', limit: '64kb' }));
 app.use(express.json({ limit: '64kb' }));
+
+app.post('/api/webhooks/whatsapp', async (req, res) => {
+  const secret = process.env.ZOK_WHATSAPP_WEBHOOK_SECRET || 'dev-whatsapp-secret';
+  return handleWebhook('whatsapp', secret, req, res);
+});
+
+app.post('/api/webhooks/line', async (req, res) => {
+  const secret = process.env.ZOK_LINE_WEBHOOK_SECRET || 'dev-line-secret';
+  return handleWebhook('line', secret, req, res);
+});
+
+app.post('/api/webhooks/messenger', async (req, res) => {
+  const secret = process.env.ZOK_MESSENGER_WEBHOOK_SECRET || 'dev-messenger-secret';
+  return handleWebhook('messenger', secret, req, res);
+});
+
+app.post('/api/webhooks/tiktok', async (req, res) => {
+  const secret = process.env.ZOK_TIKTOK_WEBHOOK_SECRET || 'dev-tiktok-secret';
+  return handleWebhook('tiktok', secret, req, res);
+});
+
 app.use('/api', requireAuth);
 app.use('/api', requireCsrf);
 
@@ -608,6 +697,37 @@ if (CHAT_STORAGE_MODE === 'postgres' && CHAT_POSTGRES_URL) {
   }
 }
 
+let sessionStore = null;
+let sessionPool = null;
+
+if (SESSION_STORE_MODE === 'postgres') {
+  try {
+    const { createSessionStore } = await import('./server/storage/postgres/session-store.js');
+    if (postgresPool) {
+      sessionStore = createSessionStore(postgresPool);
+    } else if (CHAT_POSTGRES_URL) {
+      const { createPostgresPool } = await import('./server/storage/postgres-storage.js');
+      sessionPool = createPostgresPool({ connectionString: CHAT_POSTGRES_URL });
+      sessionStore = createSessionStore(sessionPool);
+    } else {
+      console.error('PostgreSQL session store requires ZOK_POSTGRES_URL');
+    }
+  } catch (error) {
+    console.error('Failed to initialize PostgreSQL session store:', error.message);
+  }
+}
+
+let rateLimitStore = null;
+
+if (RATE_LIMIT_STORE === 'postgres' && postgresPool) {
+  try {
+    rateLimitStore = createRateLimitStore(postgresPool);
+    rateLimitStore.startCleanup();
+  } catch (error) {
+    console.error('Failed to initialize PostgreSQL rate-limit store:', error.message);
+  }
+}
+
 let auditService = null;
 if (postgresPool) {
   try {
@@ -618,6 +738,16 @@ if (postgresPool) {
 }
 const auditMiddleware = createAuditMiddleware(postgresPool);
 app.use('/api', auditMiddleware);
+
+let idempotencyStore = null;
+let consentChecker = null;
+if (postgresPool) {
+  idempotencyStore = createIdempotencyStore(postgresPool);
+  consentChecker = createConsentChecker(postgresPool);
+} else {
+  idempotencyStore = createIdempotencyStore(null);
+  consentChecker = createConsentChecker(null);
+}
 
 async function readDB() {
   return storage.read();
@@ -637,6 +767,107 @@ async function postgresBackedChat(request, chat) {
   return overlayPostgresMessages(chat, state);
 }
 
+async function processWebhookEvent(provider, eventType, payload, idempotencyKey, tenantId) {
+  const normalizedEventType = typeof eventType === 'string' ? eventType.trim().toLowerCase() : 'unknown';
+  if (!INBOUND_EVENT_TYPES.includes(normalizedEventType)) {
+    return { status: 'ignored', reason: 'unsupported_event_type' };
+  }
+
+  if (idempotencyStore) {
+    const alreadyProcessed = await idempotencyStore.check(idempotencyKey);
+    if (alreadyProcessed) {
+      return { status: 'duplicate' };
+    }
+    await idempotencyStore.mark(idempotencyKey, 86400, {
+      provider,
+      eventType: normalizedEventType,
+      contactId: payload?.contactId || '',
+      payload,
+    });
+  }
+
+  if (consentChecker && tenantId) {
+    const contactId = payload?.contactId || payload?.from || '';
+    if (contactId) {
+      const allowed = await consentChecker.isAllowed(contactId, provider, tenantId);
+      if (!allowed) {
+        return { status: 'rejected', reason: 'consent_required' };
+      }
+    }
+  }
+
+  return { status: 'accepted', eventType: normalizedEventType };
+}
+
+function extractWebhookExternalId(provider, payload) {
+  if (!payload || typeof payload !== 'object') return `${Date.now()}`;
+
+  switch (provider) {
+    case 'whatsapp':
+    case 'messenger': {
+      const entries = payload.entry;
+      if (Array.isArray(entries) && entries[0]?.changes?.[0]?.value?.messages?.[0]?.id) {
+        return entries[0].changes[0].value.messages[0].id;
+      }
+      if (Array.isArray(entries) && entries[0]?.changes?.[0]?.value?.reads?.[0]?.id) {
+        return entries[0].changes[0].value.reads[0].id;
+      }
+      break;
+    }
+    case 'line': {
+      const events = payload.events;
+      if (Array.isArray(events) && events[0]?.message?.id) {
+        return events[0].message.id;
+      }
+      if (Array.isArray(events) && events[0]?.id) {
+        return events[0].id;
+      }
+      break;
+    }
+    case 'tiktok': {
+      if (payload.data?.id) {
+        return payload.data.id;
+      }
+      break;
+    }
+    default:
+      break;
+  }
+
+  return `${Date.now()}`;
+}
+
+async function handleWebhook(provider, secret, req, res) {
+  try {
+    const signatureHeader = req.get(getExpectedSignatureHeader(provider));
+    if (!signatureHeader) {
+      return res.status(401).json({ error: 'Missing webhook signature' });
+    }
+
+    const verification = verifyWebhookSignature(provider, secret, req.body, signatureHeader);
+    if (!verification.valid) {
+      return res.status(401).json({ error: verification.error || 'Invalid webhook signature' });
+    }
+
+    const externalId = extractWebhookExternalId(provider, verification.payload);
+    const idempotencyKey = buildIdempotencyKey(provider, verification.eventType, externalId);
+
+    const tenantId = req.user?.tenantId || null;
+    const result = await processWebhookEvent(provider, verification.eventType, verification.payload, idempotencyKey, tenantId);
+
+    if (result.status === 'rejected') {
+      return res.status(403).json({ error: 'Consent required', reason: result.reason });
+    }
+    if (result.status === 'duplicate') {
+      return res.status(200).json({ status: 'duplicate', eventType: result.eventType });
+    }
+    return res.status(202).json({ status: 'accepted', eventType: result.eventType });
+  } catch (error) {
+    console.error(`[${req.method} ${req.originalUrl}] webhook error:`, error.message);
+    return res.status(500).json({ error: 'Webhook processing failed' });
+  }
+}
+
 app.get('/api/health', async (_req, res) => {
   try {
     await readDB();
@@ -651,7 +882,7 @@ app.get('/api/auth/config', (req, res) => {
   res.json({ configured: AUTH_CONFIGURED, registrationEnabled: false });
 });
 
-app.post('/api/auth/login', rateLimit({ windowMs: 15 * 60_000, max: 10 }), (req, res) => {
+app.post('/api/auth/login', rateLimit({ windowMs: 15 * 60_000, max: 10 }), async (req, res) => {
   const emailResult = requiredText(req.body?.email, 'Email', 254);
   const passwordResult = requiredText(req.body?.password, 'Password', 256);
 
@@ -667,10 +898,10 @@ app.post('/api/auth/login', rateLimit({ windowMs: 15 * 60_000, max: 10 }), (req,
     return res.status(401).json({ error: 'Invalid email or password' });
   }
 
-  pruneExpiredSessions();
-  const token = randomBytes(32).toString('base64url');
+  await pruneExpiredSessions();
+
   const session = {
-    token,
+    token: randomBytes(32).toString('base64url'),
     csrfToken: randomBytes(32).toString('base64url'),
     expiresAt: Date.now() + SESSION_TTL_MS,
     user: {
@@ -679,7 +910,37 @@ app.post('/api/auth/login', rateLimit({ windowMs: 15 * 60_000, max: 10 }), (req,
       ...(ADMIN_TENANT_ID ? { tenantId: ADMIN_TENANT_ID } : {}),
     },
   };
-  sessions.set(token, session);
+
+  if (sessionStore && session.user.tenantId) {
+    const client = await (sessionPool || postgresPool).connect();
+    try {
+      const userResult = await client.query(
+        'SELECT id FROM users WHERE tenant_id = $1 AND email = $2 LIMIT 1',
+        [session.user.tenantId, email],
+      );
+      if (userResult.rows.length === 0) {
+        await client.query(
+          `INSERT INTO users (tenant_id, email, display_name, status)
+           VALUES ($1, $2, $3, 'active')`,
+          [session.user.tenantId, email, email.split('@')[0]],
+        );
+      }
+    } finally {
+      client.release();
+    }
+  }
+
+  try {
+    if (sessionStore) {
+      await sessionStore.create(session);
+    } else {
+      sessions.set(session.token, session);
+    }
+  } catch (error) {
+    console.error(`[${req.method} ${req.originalUrl}] session creation failed:`, error.message);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+
   setAuthCookies(res, session);
 
   if (auditService) {
@@ -987,8 +1248,10 @@ app.post('/api/roles', async (req, res) => {
   }
 });
 
-app.post('/api/auth/logout', (req, res) => {
-  if (req.session?.token) sessions.delete(req.session.token);
+app.post('/api/auth/logout', async (req, res) => {
+  if (req.session?.token) {
+    try { await deleteSession(req.session.token); } catch {}
+  }
   clearAuthCookies(res);
 
   if (auditService && req.user?.tenantId) {
@@ -1373,6 +1636,57 @@ app.post('/api/integrations/:id/toggle', ...rbacGuard('integrations:write'), asy
   return res.status(404).json({ error: 'Integration not found' });
 });
 
+app.get('/api/consent/:contactId', async (req, res) => {
+  const contactId = req.params.contactId;
+  if (!contactId || typeof contactId !== 'string') {
+    return res.status(400).json({ error: 'contactId is required' });
+  }
+
+  const tenantId = req.user?.tenantId;
+  if (!tenantId) {
+    return res.status(400).json({ error: 'Tenant context is required' });
+  }
+
+  if (!consentChecker) {
+    return res.status(503).json({ error: 'Consent service is not available' });
+  }
+
+  const records = [];
+  for (const channel of ['whatsapp', 'line', 'messenger', 'tiktok']) {
+    const record = await consentChecker.getConsent(contactId, channel, tenantId);
+    if (record) records.push(record);
+  }
+
+  return res.json(records);
+});
+
+app.post('/api/consent/:contactId', ...rbacGuard('integrations:write'), async (req, res) => {
+  const contactId = req.params.contactId;
+  const { channel, status } = req.body || {};
+
+  if (!contactId || typeof contactId !== 'string') {
+    return res.status(400).json({ error: 'contactId is required' });
+  }
+  if (typeof channel !== 'string' || !['whatsapp', 'line', 'messenger', 'tiktok'].includes(channel)) {
+    return res.status(400).json({ error: 'channel must be whatsapp, line, messenger, or tiktok' });
+  }
+  if (typeof status !== 'string' || !['granted', 'revoked'].includes(status)) {
+    return res.status(400).json({ error: "status must be 'granted' or 'revoked'" });
+  }
+
+  const tenantId = req.user?.tenantId;
+  if (!tenantId) {
+    return res.status(400).json({ error: 'Tenant context is required' });
+  }
+
+  if (!consentChecker) {
+    return res.status(503).json({ error: 'Consent service is not available' });
+  }
+
+  const record = await consentChecker.setConsent(contactId, channel, status, tenantId);
+  return res.status(201).json(record);
+});
+
 app.use((error, req, res, next) => {
   console.error(`[${req.method} ${req.originalUrl}]`, error.message);
   if (res.headersSent) return next(error);
@@ -1401,6 +1715,16 @@ export function startServer(port = PORT) {
   if (postgresStorage) {
     server.once('close', () => {
       void postgresStorage.close();
+    });
+  }
+  if (sessionPool) {
+    server.once('close', () => {
+      void sessionPool.end();
+    });
+  }
+  if (rateLimitStore) {
+    server.once('close', () => {
+      rateLimitStore.stopCleanup();
     });
   }
   return server;
