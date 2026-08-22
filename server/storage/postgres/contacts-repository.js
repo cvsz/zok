@@ -15,6 +15,7 @@ export function createContactsRepository(tx) {
     const result = await tx.query(`
       SELECT id, name, email, phone, external_id AS "externalId", metadata, created_at AS "createdAt", updated_at AS "updatedAt"
       FROM contacts
+      WHERE deleted_at IS NULL
       ORDER BY created_at ASC, id ASC
     `);
     return result.rows;
@@ -59,7 +60,7 @@ export function createContactsRepository(tx) {
     const result = await tx.query(`
       SELECT id, name, email, phone, external_id AS "externalId", metadata, created_at AS "createdAt", updated_at AS "updatedAt"
       FROM contacts
-      WHERE id = $1
+      WHERE id = $1 AND deleted_at IS NULL
       LIMIT 1
     `, [id]);
     return result.rows[0] || null;

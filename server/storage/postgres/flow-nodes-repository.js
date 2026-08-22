@@ -15,6 +15,7 @@ export function createFlowNodesRepository(tx) {
       SELECT id, type, title, description, x, y, details,
         created_at AS "createdAt", updated_at AS "updatedAt"
       FROM flow_nodes
+      WHERE deleted_at IS NULL
       ORDER BY created_at ASC, id ASC
     `);
     return result.rows;

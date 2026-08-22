@@ -67,6 +67,7 @@ export function createConversationsRepository(tx) {
       SELECT c.id, c.contact_id AS "contactId", c.channel, c.external_thread_id AS "externalThreadId",
         c.status, c.created_at AS "createdAt", c.updated_at AS "updatedAt"
       FROM conversations c
+      WHERE c.deleted_at IS NULL
       ORDER BY c.updated_at DESC, c.id ASC
     `);
     return result.rows;
@@ -85,7 +86,7 @@ export function createConversationsRepository(tx) {
       SELECT c.id, c.contact_id AS "contactId", c.channel, c.external_thread_id AS "externalThreadId",
         c.status, c.created_at AS "createdAt", c.updated_at AS "updatedAt"
       FROM conversations c
-      WHERE c.external_thread_id = $1
+      WHERE c.external_thread_id = $1 AND c.deleted_at IS NULL
       LIMIT 1
     `, [normalizedExternalThreadId]);
     return result.rows[0] || null;
@@ -100,7 +101,7 @@ export function createConversationsRepository(tx) {
       SELECT m.id, m.conversation_id AS "conversationId", m.direction, m.sender_type AS "senderType",
         m.body, m.external_message_id AS "externalMessageId", m.metadata, m.sent_at AS "sentAt"
       FROM messages m
-      WHERE m.conversation_id = $1
+      WHERE m.conversation_id = $1 AND m.deleted_at IS NULL
       ORDER BY m.sent_at ASC, m.id ASC
     `, [conversationId]);
     return result.rows;

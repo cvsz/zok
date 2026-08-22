@@ -1,4 +1,4 @@
-import { createPasswordHash, verifyPassword } from '../../../server.js';
+import { createPasswordHash, verifyPassword } from '../../utils/password.js';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -53,7 +53,7 @@ export function createUsersRepository(tx) {
       SELECT id, tenant_id AS "tenantId", email, display_name AS "displayName",
         status, created_at AS "createdAt", updated_at AS "updatedAt"
       FROM users
-      WHERE id = $1
+      WHERE id = $1 AND deleted_at IS NULL
       LIMIT 1
     `, [id]);
     return result.rows[0] || null;
@@ -68,7 +68,7 @@ export function createUsersRepository(tx) {
       SELECT id, tenant_id AS "tenantId", email, display_name AS "displayName",
         status, created_at AS "createdAt", updated_at AS "updatedAt"
       FROM users
-      WHERE tenant_id = $1 AND email = $2
+      WHERE tenant_id = $1 AND email = $2 AND deleted_at IS NULL
       LIMIT 1
     `, [tx.tenantId, normalizedEmail]);
     return result.rows[0] || null;
@@ -79,6 +79,7 @@ export function createUsersRepository(tx) {
       SELECT id, tenant_id AS "tenantId", email, display_name AS "displayName",
         status, created_at AS "createdAt", updated_at AS "updatedAt"
       FROM users
+      WHERE deleted_at IS NULL
       ORDER BY created_at ASC, id ASC
     `);
     return result.rows;
@@ -134,7 +135,7 @@ export function createUsersRepository(tx) {
     const result = await tx.query(`
       UPDATE users
       SET ${updates.join(', ')}
-      WHERE tenant_id = $${parameterIndex++} AND id = $${parameterIndex++}
+      WHERE tenant_id = $${parameterIndex++} AND id = $${parameterIndex++} AND deleted_at IS NULL
       RETURNING id, tenant_id AS "tenantId", email, display_name AS "displayName",
         status, created_at AS "createdAt", updated_at AS "updatedAt"
     `, values);
@@ -160,7 +161,7 @@ export function createUsersRepository(tx) {
       SELECT id, email, display_name AS "displayName", password_hash AS "passwordHash",
         status, created_at AS "createdAt", updated_at AS "updatedAt"
       FROM users
-      WHERE tenant_id = $1 AND email = $2
+      WHERE tenant_id = $1 AND email = $2 AND deleted_at IS NULL
       LIMIT 1
     `, [tx.tenantId, email.trim().toLowerCase()]);
 

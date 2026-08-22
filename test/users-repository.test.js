@@ -4,7 +4,7 @@ process.env.ZOK_NO_LISTEN = 'true';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createUsersRepository } from '../server/storage/postgres/users-repository.js';
-import { createPasswordHash } from '../server.js';
+import { createPasswordHash } from '../server/utils/password.js';
 
 const tenantId = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb';
 const userId = 'eeeeeeee-5555-4555-8555-eeeeeeeeeeee';

@@ -16,6 +16,7 @@ export function createCampaignsRepository(tx) {
       SELECT id, name, status, channel, target, scheduled_at AS "scheduledAt",
         created_at AS "createdAt", updated_at AS "updatedAt"
       FROM campaigns
+      WHERE deleted_at IS NULL
       ORDER BY created_at ASC, id ASC
     `);
     return result.rows;

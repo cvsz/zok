@@ -45,7 +45,18 @@ function cookieValue(setCookieHeader, name) {
 test('API release hardening protects and validates the real request path', async () => {
   const health = await fetch(`${baseUrl}/api/health`);
   assert.equal(health.status, 200);
-  assert.deepEqual(await health.json(), { status: 'ok', service: 'zok-api', environment: 'test' });
+  assert.deepEqual(await health.json(), {
+    status: 'ok',
+    service: 'zok-api',
+    environment: 'test',
+    dependencies: {
+      database: 'ok',
+      postgres: 'disabled',
+      sessionStore: 'disabled',
+      rateLimitStore: 'disabled',
+      auditService: 'disabled',
+    },
+  });
   assert.equal(health.headers.get('x-content-type-options'), 'nosniff');
   assert.equal(health.headers.get('x-frame-options'), 'DENY');
   assert.equal(health.headers.get('cache-control'), 'no-store');
@@ -166,6 +177,13 @@ test('API release hardening protects and validates the real request path', async
     status: 'degraded',
     service: 'zok-api',
     environment: 'test',
+    dependencies: {
+      database: 'error',
+      postgres: 'disabled',
+      sessionStore: 'disabled',
+      rateLimitStore: 'disabled',
+      auditService: 'disabled',
+    },
   });
   assert.equal(await readFile(databaseFile, 'utf8'), '{"broken": true');
   await writeFile(databaseFile, JSON.stringify(afterConcurrentWrites, null, 2), 'utf8');

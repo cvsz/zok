@@ -16,6 +16,7 @@ export function createIntegrationsRepository(tx) {
       SELECT id, provider, external_id AS "externalId", status, config,
         created_at AS "createdAt", updated_at AS "updatedAt"
       FROM integrations
+      WHERE deleted_at IS NULL
       ORDER BY created_at ASC, id ASC
     `);
     return result.rows;
@@ -34,7 +35,7 @@ export function createIntegrationsRepository(tx) {
       SELECT id, provider, external_id AS "externalId", status, config,
         created_at AS "createdAt", updated_at AS "updatedAt"
       FROM integrations
-      WHERE provider = $1
+      WHERE provider = $1 AND deleted_at IS NULL
       LIMIT 1
     `, [normalizedProvider]);
     return result.rows[0] || null;

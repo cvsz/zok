@@ -3,12 +3,12 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
-  pbkdf2Sync,
   randomBytes,
   randomUUID,
   timingSafeEqual,
 } from 'node:crypto';
 import { createJsonStorage } from './server/storage/json-storage.js';
+import { verifyPassword } from './server/utils/password.js';
 import {
   createChatRouteGate,
   overlayPostgresMessages,
@@ -27,6 +27,15 @@ import { verifyWebhookSignature, getExpectedSignatureHeader } from './server/cha
 import { validateInboundEvent, buildIdempotencyKey, INBOUND_EVENT_TYPES } from './server/channels/channel-contracts.js';
 import { hashToken } from './server/storage/postgres/session-store.js';
 import { createRateLimitStore } from './server/storage/postgres/rate-limit-store.js';
+import { createLogger } from './server/observability/logger.js';
+import { configureMetrics, renderPrometheusMetrics, incrementCounter, setGauge, recordLatency } from './server/observability/metrics.js';
+import { configureTracing, createTraceMiddleware } from './server/observability/tracing.js';
+import { createGovernedAIService } from './server/ai/governed-ai-service.js';
+import { createAiTelemetry } from './server/ai/ai-telemetry.js';
+import { createAiApproval } from './server/ai/ai-approval.js';
+import { createDataExport } from './server/privacy/data-export.js';
+import { createDataDeletion } from './server/privacy/data-deletion.js';
+import { createRetentionPolicy } from './server/privacy/retention-policy.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -83,49 +92,6 @@ if (ALLOWED_ORIGINS.has('*')) {
 const sessions = new Map();
 const rateLimitBuckets = new Map();
 const invitations = new Map();
-
-const PASSWORD_HASH_PREFIX = 'pbkdf2_sha256';
-const PASSWORD_HASH_ITERATIONS = 310000;
-const MAX_PASSWORD_HASH_ITERATIONS = 2_000_000;
-
-export function createPasswordHash(password) {
-  if (typeof password !== 'string' || password.length < 12) {
-    throw new Error('Password must contain at least 12 characters');
-  }
-
-  const salt = randomBytes(16).toString('base64url');
-  const derivedKey = pbkdf2Sync(
-    password,
-    salt,
-    PASSWORD_HASH_ITERATIONS,
-    32,
-    'sha256',
-  ).toString('base64url');
-
-  return `${PASSWORD_HASH_PREFIX}$${PASSWORD_HASH_ITERATIONS}$${salt}$${derivedKey}`;
-}
-
-export function verifyPassword(password, storedHash) {
-  if (typeof password !== 'string' || typeof storedHash !== 'string') return false;
-
-  const [prefix, iterationsValue, salt, expectedValue] = storedHash.split('$');
-  const iterations = Number(iterationsValue);
-  if (
-    prefix !== PASSWORD_HASH_PREFIX ||
-    !Number.isSafeInteger(iterations) ||
-    iterations < 100000 ||
-    iterations > MAX_PASSWORD_HASH_ITERATIONS ||
-    !salt ||
-    !expectedValue
-  ) {
-    return false;
-  }
-
-  const expected = Buffer.from(expectedValue, 'base64url');
-  if (expected.length !== 32) return false;
-  const actual = pbkdf2Sync(password, salt, iterations, expected.length, 'sha256');
-  return expected.length === actual.length && timingSafeEqual(expected, actual);
-}
 
 function parseCookies(req) {
   const header = req.headers.cookie || '';
@@ -245,7 +211,7 @@ function rateLimit({ windowMs, max }) {
         remaining = result.remaining;
         retryAfter = result.retryAfter;
       } catch (error) {
-        console.error('[rate-limit] store error:', error.message);
+        appLogger.warn('rate-limit store error', { error: error.message });
       }
     } else {
       const existing = rateLimitBuckets.get(key);
@@ -325,6 +291,8 @@ async function requireAuth(req, res, next) {
   if (!session) return res.status(401).json({ error: 'Authentication required' });
   req.session = session;
   req.user = session.user;
+  req.tenantId = session.user.tenantId || null;
+  req.userId = session.user.id || null;
   return next();
 }
 
@@ -693,7 +661,7 @@ if (CHAT_STORAGE_MODE === 'postgres' && CHAT_POSTGRES_URL) {
     postgresStorage = createPostgresStorage({ pool: postgresPool });
     rbacMiddlewareInstance = createRbacMiddleware(postgresStorage);
   } catch (error) {
-    console.error('Failed to initialize PostgreSQL RBAC storage:', error.message);
+    appLogger.error('Failed to initialize PostgreSQL RBAC storage', { error: error.message });
   }
 }
 
@@ -710,10 +678,10 @@ if (SESSION_STORE_MODE === 'postgres') {
       sessionPool = createPostgresPool({ connectionString: CHAT_POSTGRES_URL });
       sessionStore = createSessionStore(sessionPool);
     } else {
-      console.error('PostgreSQL session store requires ZOK_POSTGRES_URL');
+      appLogger.error('PostgreSQL session store requires ZOK_POSTGRES_URL');
     }
   } catch (error) {
-    console.error('Failed to initialize PostgreSQL session store:', error.message);
+    appLogger.error('Failed to initialize PostgreSQL session store', { error: error.message });
   }
 }
 
@@ -724,7 +692,7 @@ if (RATE_LIMIT_STORE === 'postgres' && postgresPool) {
     rateLimitStore = createRateLimitStore(postgresPool);
     rateLimitStore.startCleanup();
   } catch (error) {
-    console.error('Failed to initialize PostgreSQL rate-limit store:', error.message);
+    appLogger.error('Failed to initialize PostgreSQL rate-limit store', { error: error.message });
   }
 }
 
@@ -733,17 +701,71 @@ if (postgresPool) {
   try {
     auditService = createAuditService(postgresPool);
   } catch (error) {
-    console.error('Failed to initialize audit service:', error.message);
+    appLogger.error('Failed to initialize audit service', { error: error.message });
   }
 }
 const auditMiddleware = createAuditMiddleware(postgresPool);
 app.use('/api', auditMiddleware);
 
+const dataExport = createDataExport({ jsonStorage: storage, postgresPool, auditService });
+const dataDeletion = createDataDeletion({ jsonStorage: storage, postgresPool, auditService });
+
+const appLogger = createLogger({ component: 'server' });
+configureTracing({ sampleRate: process.env.ZOK_TRACE_SAMPLE_RATE || 'always' });
+if (postgresPool) {
+  configureMetrics(postgresPool);
+}
+
+let retentionPolicy = null;
+try {
+  retentionPolicy = createRetentionPolicy({ postgresPool, auditService });
+} catch (error) {
+  appLogger.warn('Failed to initialize retention policy', { error: error.message });
+}
+
+app.use((req, res, next) => {
+  req.requestId = randomUUID();
+  req.tenantId = null;
+  req.userId = null;
+  next();
+});
+
+app.use(createTraceMiddleware());
+
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.setHeader('X-Request-Id', req.requestId);
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    const labels = {
+      method: req.method,
+      route: req.path,
+      status: res.statusCode,
+    };
+    incrementCounter('api_requests', labels);
+    recordLatency(duration, { method: req.method, route: req.path });
+    if (res.statusCode >= 400) {
+      incrementCounter('api_errors', labels);
+    }
+  });
+  next();
+});
+
 let idempotencyStore = null;
 let consentChecker = null;
+let aiTelemetry = null;
+let aiApproval = null;
+let governedAIService = null;
 if (postgresPool) {
   idempotencyStore = createIdempotencyStore(postgresPool);
   consentChecker = createConsentChecker(postgresPool);
+  try {
+    aiTelemetry = createAiTelemetry(postgresPool);
+    aiApproval = createAiApproval(postgresPool);
+    governedAIService = createGovernedAIService({ telemetry: aiTelemetry, approval: aiApproval, pool: postgresPool });
+  } catch (error) {
+    appLogger.error('Failed to initialize governed AI services', { error: error.message });
+  }
 } else {
   idempotencyStore = createIdempotencyStore(null);
   consentChecker = createConsentChecker(null);
@@ -859,23 +881,40 @@ async function handleWebhook(provider, secret, req, res) {
       return res.status(403).json({ error: 'Consent required', reason: result.reason });
     }
     if (result.status === 'duplicate') {
+      incrementCounter('webhook_events', { provider, eventType: result.eventType, status: 'duplicate' });
       return res.status(200).json({ status: 'duplicate', eventType: result.eventType });
     }
+    incrementCounter('webhook_events', { provider, eventType: result.eventType, status: 'accepted' });
     return res.status(202).json({ status: 'accepted', eventType: result.eventType });
   } catch (error) {
-    console.error(`[${req.method} ${req.originalUrl}] webhook error:`, error.message);
+    appLogger.error('webhook error', { method: req.method, url: req.originalUrl, error: error.message });
+    incrementCounter('webhook_errors', { provider: req.path.split('/')[3] || 'unknown' });
     return res.status(500).json({ error: 'Webhook processing failed' });
   }
 }
 
 app.get('/api/health', async (_req, res) => {
+  const dependencies = {
+    database: 'unknown',
+    postgres: postgresStorage ? 'connected' : 'disabled',
+    sessionStore: sessionStore ? 'connected' : 'disabled',
+    rateLimitStore: rateLimitStore ? 'connected' : 'disabled',
+    auditService: auditService ? 'connected' : 'disabled',
+  };
   try {
     await readDB();
-    return res.json({ status: 'ok', service: 'zok-api', environment: NODE_ENV });
+    dependencies.database = 'ok';
+    return res.json({ status: 'ok', service: 'zok-api', environment: NODE_ENV, dependencies });
   } catch (error) {
-    console.error('Health check failed:', error.message);
-    return res.status(503).json({ status: 'degraded', service: 'zok-api', environment: NODE_ENV });
+    appLogger.error('health check failed', { error: error.message });
+    dependencies.database = 'error';
+    return res.status(503).json({ status: 'degraded', service: 'zok-api', environment: NODE_ENV, dependencies });
   }
+});
+
+app.get('/metrics', (_req, res) => {
+  res.setHeader('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+  res.send(renderPrometheusMetrics());
 });
 
 app.get('/api/auth/config', (req, res) => {
@@ -937,11 +976,13 @@ app.post('/api/auth/login', rateLimit({ windowMs: 15 * 60_000, max: 10 }), async
       sessions.set(session.token, session);
     }
   } catch (error) {
-    console.error(`[${req.method} ${req.originalUrl}] session creation failed:`, error.message);
+    appLogger.error('session creation failed', { method: req.method, url: req.originalUrl, error: error.message });
     return res.status(500).json({ error: 'Internal server error' });
   }
 
   setAuthCookies(res, session);
+
+  setGauge('active_sessions', sessions.size + (sessionStore ? 1 : 0));
 
   if (auditService) {
     auditService.emit({
@@ -1027,7 +1068,7 @@ app.post('/api/auth/invite', rateLimit({ windowMs: 60_000, max: 20 }), async (re
     });
   } catch (error) {
     if (error.status) return res.status(error.status).json({ error: error.message });
-    console.error(`[${req.method} ${req.originalUrl}]`, error.message);
+    appLogger.error('invite endpoint error', { method: req.method, url: req.originalUrl, error: error.message });
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1104,7 +1145,7 @@ app.post('/api/auth/accept-invite', rateLimit({ windowMs: 60_000, max: 10 }), as
     return res.status(201).json({ message: 'Account created successfully' });
   } catch (error) {
     if (error.status) return res.status(error.status).json({ error: error.message });
-    console.error(`[${req.method} ${req.originalUrl}]`, error.message);
+    appLogger.error('accept-invite error', { method: req.method, url: req.originalUrl, error: error.message });
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1187,7 +1228,7 @@ app.post('/api/auth/register', rateLimit({ windowMs: 60_000, max: 10 }), async (
     return res.status(201).json({ message: 'User registered successfully' });
   } catch (error) {
     if (error.status) return res.status(error.status).json({ error: error.message });
-    console.error(`[${req.method} ${req.originalUrl}]`, error.message);
+    appLogger.error('register error', { method: req.method, url: req.originalUrl, error: error.message });
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1207,7 +1248,7 @@ app.get('/api/roles', async (req, res) => {
     });
     return res.json(roles);
   } catch (error) {
-    console.error(`[${req.method} ${req.originalUrl}]`, error.message);
+    appLogger.error('list roles error', { method: req.method, url: req.originalUrl, error: error.message });
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1243,7 +1284,7 @@ app.post('/api/roles', async (req, res) => {
     if (error.code === '23505') {
       return res.status(409).json({ error: 'Role already exists for this tenant' });
     }
-    console.error(`[${req.method} ${req.originalUrl}]`, error.message);
+    appLogger.error('create role error', { method: req.method, url: req.originalUrl, error: error.message });
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1253,6 +1294,7 @@ app.post('/api/auth/logout', async (req, res) => {
     try { await deleteSession(req.session.token); } catch {}
   }
   clearAuthCookies(res);
+  setGauge('active_sessions', sessions.size + (sessionStore ? -1 : 0));
 
   if (auditService && req.user?.tenantId) {
     auditService.emit({
@@ -1328,6 +1370,7 @@ app.post('/api/chats/:id/messages', ...rbacGuard('chats:write'), async (req, res
 
   if (!updatedChat) return res.status(404).json({ error: 'Chat not found' });
   res.status(201).json(updatedChat);
+  incrementCounter('messages_sent', { sender, chatId: String(chatId) });
 
   setTimeout(async () => {
     try {
@@ -1347,6 +1390,7 @@ app.post('/api/chats/:id/messages', ...rbacGuard('chats:write'), async (req, res
           sender: 'customer',
           text: responseText,
         });
+        incrementCounter('messages_received', { chatId: String(chatId), sender: 'customer' });
         const currentState = await chatRouteGate.runtime.read(req, chatId);
         const currentUnread = currentState?.metadata?.unread || 0;
         const newUnread = chatId !== activeChatId ? currentUnread + 1 : 0;
@@ -1371,8 +1415,10 @@ app.post('/api/chats/:id/messages', ...rbacGuard('chats:write'), async (req, res
           ? (liveDb.chats[liveChatIndex].unread || 0) + 1
           : 0;
       });
+      incrementCounter('messages_received', { chatId: String(chatId), sender: 'customer' });
     } catch (e) {
-      console.error('Error during simulated bot reply:', e);
+      appLogger.error('simulated bot reply error', { chatId, error: e.message });
+      incrementCounter('messages_failed', { chatId: String(chatId), reason: 'bot_reply' });
     }
   }, 1500);
 });
@@ -1487,6 +1533,138 @@ app.post('/api/ai-config', ...rbacGuard('ai-config:write'), async (req, res) => 
     return db.aiConfig;
   });
   return res.json(savedConfig);
+});
+
+app.post('/api/ai/config', ...rbacGuard('ai-config:write'), async (req, res) => {
+  if (!governedAIService) {
+    return res.status(503).json({ error: 'Governed AI service is not available' });
+  }
+  const tenantId = req.user?.tenantId;
+  if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+
+  const { config, risk_level } = req.body || {};
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
+    return res.status(400).json({ error: 'config must be a non-null object' });
+  }
+
+  try {
+    const validated = await governedAIService.validateConfig(config);
+    if (!validated) {
+      return res.status(400).json({ error: 'Invalid AI config' });
+    }
+  } catch (error) {
+    return res.status(error.status || 400).json({ error: error.message });
+  }
+
+  try {
+    const saved = await postgresStorage.withTenantTransaction(tenantId, async (_tx) => {
+      const telemetry = aiTelemetry || createAiTelemetry({ connect: () => ({ query: async () => ({ rows: [] }), release: () => {} }) });
+      const approval = aiApproval || createAiApproval({ connect: () => ({ query: async () => ({ rows: [] }), release: () => {} }) });
+      const service = createGovernedAIService({ telemetry, approval, pool: postgresPool || { connect: () => ({ query: async () => ({ rows: [] }), release: () => {} }) } });
+      return service.setConfig(tenantId, config, risk_level);
+    });
+    return res.status(201).json(saved);
+  } catch (error) {
+    return res.status(error.status || 500).json({ error: error.message });
+  }
+});
+
+app.post('/api/ai/chat', async (req, res) => {
+  if (!governedAIService) {
+    return res.status(503).json({ error: 'Governed AI service is not available' });
+  }
+  const tenantId = req.user?.tenantId;
+  const userId = req.user?.id || req.user?.email || 'anonymous';
+  if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+
+  const { messages } = req.body || {};
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return res.status(400).json({ error: 'messages must be a non-empty array' });
+  }
+
+  try {
+    const response = await governedAIService.chat(tenantId, userId, messages, {
+      requestId: req.requestId,
+    });
+    return res.json(response);
+  } catch (error) {
+    return res.status(error.status || 500).json({ error: error.message });
+  }
+});
+
+app.get('/api/ai/approvals', async (req, res) => {
+  if (!governedAIService) {
+    return res.status(503).json({ error: 'Governed AI service is not available' });
+  }
+  const tenantId = req.user?.tenantId;
+  if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+
+  try {
+    const approvals = await governedAIService.getApprovals(tenantId);
+    return res.json(approvals);
+  } catch (error) {
+    return res.status(error.status || 500).json({ error: error.message });
+  }
+});
+
+app.post('/api/ai/approvals/:id/approve', async (req, res) => {
+  if (!governedAIService) {
+    return res.status(503).json({ error: 'Governed AI service is not available' });
+  }
+  const tenantId = req.user?.tenantId;
+  const userId = req.user?.id || req.user?.email;
+  if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+  if (!userId) return res.status(400).json({ error: 'User context is required' });
+
+  const approvalId = req.params.id;
+  try {
+    const result = await governedAIService.approveApproval(tenantId, approvalId, userId);
+    if (!result) return res.status(404).json({ error: 'Approval not found or already processed' });
+    return res.json(result);
+  } catch (error) {
+    return res.status(error.status || 500).json({ error: error.message });
+  }
+});
+
+app.post('/api/ai/approvals/:id/reject', async (req, res) => {
+  if (!governedAIService) {
+    return res.status(503).json({ error: 'Governed AI service is not available' });
+  }
+  const tenantId = req.user?.tenantId;
+  const userId = req.user?.id || req.user?.email;
+  if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+  if (!userId) return res.status(400).json({ error: 'User context is required' });
+
+  const approvalId = req.params.id;
+  try {
+    const result = await governedAIService.rejectApproval(tenantId, approvalId, userId);
+    if (!result) return res.status(404).json({ error: 'Approval not found or already processed' });
+    return res.json(result);
+  } catch (error) {
+    return res.status(error.status || 500).json({ error: error.message });
+  }
+});
+
+app.get('/api/ai/telemetry', async (req, res) => {
+  if (!governedAIService) {
+    return res.status(503).json({ error: 'Governed AI service is not available' });
+  }
+  const tenantId = req.user?.tenantId;
+  if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+
+  const { requestId, approvalStatus, model, limit, offset } = req.query;
+  try {
+    const events = await governedAIService.getTelemetry(tenantId, {
+      requestId: typeof requestId === 'string' ? requestId : undefined,
+      approvalStatus: typeof approvalStatus === 'string' ? approvalStatus : undefined,
+      model: typeof model === 'string' ? model : undefined,
+      limit: limit ? Number(limit) : undefined,
+      offset: offset ? Number(offset) : undefined,
+    });
+    return res.json(events);
+  } catch (error) {
+    return res.status(error.status || 500).json({ error: error.message });
+  }
 });
 
 app.get('/api/flow-nodes', async (req, res) => {
@@ -1687,8 +1865,93 @@ app.post('/api/consent/:contactId', ...rbacGuard('integrations:write'), async (r
   return res.status(201).json(record);
 });
 
+function requireOwner(req, res, next) {
+  if (req.user?.role === 'owner') return next();
+  return res.status(403).json({ error: 'Owner role is required' });
+}
+
+app.get('/api/privacy/export', requireAuth, requireCsrf, async (req, res) => {
+  if (!req.user?.tenantId) {
+    return res.status(400).json({ error: 'Tenant context is required' });
+  }
+
+  try {
+    const result = await dataExport.exportTenant(req.user.tenantId);
+    res.setHeader('Content-Type', result.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.setHeader('Content-Length', Buffer.byteLength(result.buffer));
+    res.end(result.buffer);
+  } catch (error) {
+    appLogger.error('export failed', { error: error.message });
+    return res.status(500).json({ error: 'Export failed' });
+  }
+});
+
+app.post('/api/privacy/delete', requireAuth, requireCsrf, async (req, res) => {
+  if (!req.user?.tenantId) {
+    return res.status(400).json({ error: 'Tenant context is required' });
+  }
+
+  const { confirm, types, beforeDate } = req.body || {};
+
+  if (!Array.isArray(types) || types.length === 0) {
+    return res.status(400).json({ error: 'types must be a non-empty array' });
+  }
+
+  try {
+    const outcome = await dataDeletion.deleteTenant(req.user.tenantId, {
+      confirm: confirm === true,
+      types,
+      beforeDate: typeof beforeDate === 'string' ? beforeDate : null,
+    });
+    return res.json(outcome);
+  } catch (error) {
+    if (error.message.includes('confirmation') || error.message.includes('Invalid deletion') || error.message.includes('Cannot delete audit_events')) {
+      return res.status(400).json({ error: error.message });
+    }
+    appLogger.error('deletion failed', { error: error.message });
+    return res.status(500).json({ error: 'Deletion failed' });
+  }
+});
+
+app.get('/api/privacy/retention-status', requireAuth, requireCsrf, async (req, res) => {
+  if (!req.user?.tenantId) {
+    return res.status(400).json({ error: 'Tenant context is required' });
+  }
+  if (!retentionPolicy) {
+    return res.status(503).json({ error: 'Retention policy service is not available' });
+  }
+
+  try {
+    const status = await retentionPolicy.getRetentionStatus(req.user.tenantId);
+    return res.json(status);
+  } catch (error) {
+    appLogger.error('retention status failed', { error: error.message });
+    return res.status(500).json({ error: 'Failed to get retention status' });
+  }
+});
+
+app.post('/api/privacy/retention-purge', requireAuth, requireCsrf, requireOwner, async (req, res) => {
+  if (!req.user?.tenantId) {
+    return res.status(400).json({ error: 'Tenant context is required' });
+  }
+  if (!retentionPolicy) {
+    return res.status(503).json({ error: 'Retention policy service is not available' });
+  }
+
+  const { customRetention } = req.body || {};
+
+  try {
+    const result = await retentionPolicy.purgeExpired(req.user.tenantId, customRetention);
+    return res.json(result);
+  } catch (error) {
+    appLogger.error('retention purge failed', { error: error.message });
+    return res.status(500).json({ error: 'Retention purge failed' });
+  }
+});
+
 app.use((error, req, res, next) => {
-  console.error(`[${req.method} ${req.originalUrl}]`, error.message);
+  appLogger.error('unhandled request error', { method: req.method, url: req.originalUrl, error: error.message });
   if (res.headersSent) return next(error);
   if (error.message === 'Origin is not allowed by CORS') {
     return res.status(403).json({ error: 'Origin is not allowed' });
@@ -1710,7 +1973,7 @@ app.use((error, req, res, next) => {
 
 export function startServer(port = PORT) {
   const server = app.listen(port, '127.0.0.1', () => {
-    console.log(`Server is running on port ${server.address().port}`);
+    appLogger.info('server started', { port: server.address().port });
   });
   if (postgresStorage) {
     server.once('close', () => {
@@ -1725,6 +1988,12 @@ export function startServer(port = PORT) {
   if (rateLimitStore) {
     server.once('close', () => {
       rateLimitStore.stopCleanup();
+    });
+  }
+  if (postgresPool) {
+    retentionPolicy.startScheduler(24 * 60 * 60 * 1000);
+    server.once('close', () => {
+      retentionPolicy.stopScheduler();
     });
   }
   return server;

@@ -16,7 +16,7 @@ export function createAiConfigRepository(tx) {
       SELECT id, agent_name AS "agentName", persona, knowledge_base AS "knowledgeBase",
         qa_pairs AS "qaPairs", created_at AS "createdAt", updated_at AS "updatedAt"
       FROM ai_config
-      WHERE tenant_id = $1
+      WHERE tenant_id = $1 AND deleted_at IS NULL
       LIMIT 1
     `, [tx.tenantId]);
     return result.rows[0] || null;

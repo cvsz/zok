@@ -71,6 +71,30 @@ export async function rollbackRateLimitRecordsMigration(databaseUrl) {
   await executeMigrationFile(databaseUrl, '005_rate_limit_records.down.sql');
 }
 
+export async function applyMetricsMigration(databaseUrl) {
+  await executeMigrationFile(databaseUrl, '006_metrics.up.sql');
+}
+
+export async function rollbackMetricsMigration(databaseUrl) {
+  await executeMigrationFile(databaseUrl, '006_metrics.down.sql');
+}
+
+export async function applyAiGovernedMigration(databaseUrl) {
+  await executeMigrationFile(databaseUrl, '007_ai_governed.up.sql');
+}
+
+export async function rollbackAiGovernedMigration(databaseUrl) {
+  await executeMigrationFile(databaseUrl, '007_ai_governed.down.sql');
+}
+
+export async function applySoftDeleteMigration(databaseUrl) {
+  await executeMigrationFile(databaseUrl, '008_soft_delete.up.sql');
+}
+
+export async function rollbackSoftDeleteMigration(databaseUrl) {
+  await executeMigrationFile(databaseUrl, '008_soft_delete.down.sql');
+}
+
 export async function executeSql(databaseUrl, sql) {
   await runPsql(databaseUrl, ['--quiet', '--command', sql]);
 }

@@ -9,7 +9,7 @@
     "start": "concurrently \"node server.js\" \"vite preview --host 127.0.0.1\"",
     "lint": "eslint src server.js test scripts vite.config.js",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --test-reporter spec",
+    "test": "node --test 'test/*.test.js' --test-reporter spec",
     "dev:vite": "concurrently \"node server.js\" \"vite\"",
     "build:vite": "vite build",
     "preview:vite": "vite preview"
@@ -19,6 +19,7 @@
     "npm": ">=9.0.0"
   },
   "dependencies": {
+    "adm-zip": "^0.6.0",
     "clsx": "^2.1.1",
     "cors": "^2.8.6",
     "date-fns": "^4.4.0",
