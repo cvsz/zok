@@ -125,3 +125,33 @@ test('legacy runtime metadata mutations fail closed for invalid tags and missing
   await assert.rejects(() => runtime.replaceTags({ user: { tenantId } }, 7, ['']), /non-empty string/i);
   await assert.rejects(() => runtime.replaceTags({ user: { tenantId } }, 7, Array(33).fill('x')), /at most 32/i);
 });
+
+test('legacy runtime touchMetadata updates partial metadata inside the authenticated tenant transaction', async () => {
+  const fixture = createStorageFixture();
+  const runtime = createLegacyChatRuntime({ storage: fixture.storage });
+  const request = { user: { tenantId } };
+
+  const touched = await runtime.touchMetadata(request, 7, { displayTime: 'Just now', unread: 5 });
+  assert.equal(touched.displayTime, 'Just now');
+  assert.equal(touched.unread, 5);
+  assert.deepEqual(fixture.getMetadata(), {
+    legacyChatId: 7,
+    avatar: 'MC',
+    assigned: 'Alex Rivera',
+    tags: ['VIP', 'LINE OA'],
+    orders: [],
+    unread: 5,
+    displayTime: 'Just now',
+  });
+});
+
+test('legacy runtime touchMetadata preserves existing metadata when patching a subset of fields', async () => {
+  const fixture = createStorageFixture();
+  const runtime = createLegacyChatRuntime({ storage: fixture.storage });
+  const request = { user: { tenantId } };
+
+  const touched = await runtime.touchMetadata(request, 7, { displayTime: '2 mins ago' });
+  assert.equal(touched.displayTime, '2 mins ago');
+  assert.equal(touched.unread, 3);
+  assert.deepEqual(touched.tags, ['VIP', 'LINE OA']);
+});

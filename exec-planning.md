@@ -74,9 +74,10 @@ Completed bounded foundations:
 - [x] PostgreSQL legacy metadata/unread/tags persistence boundary: `7a7b8c8c56c960b405ab63738b9f1a0648ac5021`, `191bdd028502382f52894c8a8cb5c592686c1bf4`, `b474ad078147d510a49b5bc65c314cd6c7aba259`, `357c58128dce60370e61be1e1a40acaf479f61c5`, service-backed `19852412c602756af826a10c8541265cea10620d`; CI `32393891922`.
 - [x] PostgreSQL-mode chat GET metadata overlay preserving legacy API shape. Strict overlay `4361b376c2c480e6c82a45a7e787496cbffefbfa` exposed compatibility regression CI `32395298787`; repair `b162f4753dd450c92ef0056fe52a3a032e7d06e2` and test `a8b2aab893f9e12b2dbaeae80055dae8f842843a` passed CI `32395415647`.
 - [x] PostgreSQL-mode `/api/chats/:id/read` and `/api/chats/:id/tags` route ownership with rollback-source preservation. Test-first `515cc33c228dcae498d03e52a440ac5af3e2d0e7` failed as expected in CI `32400607666`; implementation `085e024914953e0dd08e336593c8dc5aa07586eb` passed CI `32400811542`.
+- [x] PostgreSQL-mode message-side unread/display-time metadata ownership via `touchMetadata`. Message writes and simulated replies no longer mutate JSON rollback snapshot. Service-backed regression proves PostgreSQL overlay returns correct `time` and `unread` while JSON remains intact. Evidence: `legacy-chat-runtime.js` `touchMetadata`, `server.js` message/reply paths, `test/legacy-chat-metadata.test.js` unit tests, `test/postgres-chat-route-api.test.js` integration assertions. Verified locally: `npm test` 30 pass / 0 fail / 11 skipped, `npm run lint` pass, `npm run typecheck` pass.
 
 Still incomplete:
-- [ ] Decide and verify message-side unread/display-time mutation semantics without mixing JSON/PostgreSQL ownership.
+- [x] Decide and verify message-side unread/display-time mutation semantics without mixing JSON/PostgreSQL ownership.
 - [ ] Production chat canary/cutover/operator rollback in an authorized deployment environment.
 - [ ] Campaigns/integrations, then AI config/flow-state PostgreSQL migration.
 - [ ] Application-wide PostgreSQL cutover/rollback and backup/restore RPO/RTO.

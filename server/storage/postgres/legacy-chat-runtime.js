@@ -116,5 +116,19 @@ export function createLegacyChatRuntime({ storage } = {}) {
     });
   }
 
-  return Object.freeze({ read, writeMessage, markRead, replaceTags });
+  async function touchMetadata(request, legacyChatId, patch = {}) {
+    const parsedId = parseLegacyChatId(legacyChatId);
+    if (parsedId === null) throw new TypeError('Legacy chat id must be a positive integer');
+    const externalThreadId = `legacy-chat:${parsedId}`;
+
+    return withRequestTransaction(storage, request, async tx => {
+      const state = await findState(tx, externalThreadId);
+      if (!state) return null;
+      const metadata = { ...metadataFromContact(state.contact), ...patch };
+      const updated = await state.contacts.replaceMetadata(state.contact.id, metadata);
+      return metadataFromContact(updated);
+    });
+  }
+
+  return Object.freeze({ read, writeMessage, markRead, replaceTags, touchMetadata });
 }

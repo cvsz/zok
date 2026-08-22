@@ -157,8 +157,13 @@ test('configuration-gated chat API owns messages/read/tags in PostgreSQL while p
   assert.equal(write.status, 201);
   const updated = await write.json();
   assert.equal(updated.time, 'Just now');
+  assert.equal(updated.unread, 0);
   assert.equal(updated.messages.at(-1).sender, 'agent');
   assert.equal(updated.messages.at(-1).text, 'Persist this in PostgreSQL');
+
+  const rollbackAfterMessageWrite = JSON.parse(await readFile(databaseFile, 'utf8'));
+  assert.equal(rollbackAfterMessageWrite.chats[0].time, '10:24 AM');
+  assert.equal(rollbackAfterMessageWrite.chats[0].unread, 2);
 
   const reread = await fetch(`${baseUrl}/api/chats`, { headers: { Cookie: cookies } });
   assert.equal(reread.status, 200);
@@ -173,6 +178,12 @@ test('configuration-gated chat API owns messages/read/tags in PostgreSQL while p
   const afterReplyChats = await afterReply.json();
   assert.equal(afterReplyChats[0].messages.at(-1).sender, 'customer');
   assert.match(afterReplyChats[0].messages.at(-1).text, /thank you for writing back/i);
+  assert.equal(afterReplyChats[0].time, 'Just now');
+  assert.equal(afterReplyChats[0].unread, 0);
+
+  const rollbackAfterReply = JSON.parse(await readFile(databaseFile, 'utf8'));
+  assert.equal(rollbackAfterReply.chats[0].time, '10:24 AM');
+  assert.equal(rollbackAfterReply.chats[0].unread, 2);
 });
 
 after(async () => {

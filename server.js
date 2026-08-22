@@ -684,14 +684,8 @@ app.post('/api/chats/:id/messages', async (req, res) => {
     });
     if (!written) return res.status(404).json({ error: 'Chat not found' });
 
-    await updateDB(currentDb => {
-      const chat = currentDb.chats.find(item => item.id === chatId);
-      if (chat) chat.time = 'Just now';
-    });
-    updatedChat = {
-      ...(await postgresBackedChat(req, metadataChat)),
-      time: 'Just now',
-    };
+    await chatRouteGate.runtime.touchMetadata(req, chatId, { displayTime: 'Just now' });
+    updatedChat = await postgresBackedChat(req, metadataChat);
   } else {
     updatedChat = await updateDB(db => {
       const chatIndex = db.chats.findIndex(c => c.id === chatId);
@@ -725,13 +719,12 @@ app.post('/api/chats/:id/messages', async (req, res) => {
           sender: 'customer',
           text: responseText,
         });
-        await updateDB(liveDb => {
-          const liveChatIndex = liveDb.chats.findIndex(c => c.id === chatId);
-          if (liveChatIndex === -1) return;
-          liveDb.chats[liveChatIndex].time = 'Just now';
-          liveDb.chats[liveChatIndex].unread = chatId !== activeChatId
-            ? (liveDb.chats[liveChatIndex].unread || 0) + 1
-            : 0;
+        const currentState = await chatRouteGate.runtime.read(req, chatId);
+        const currentUnread = currentState?.metadata?.unread || 0;
+        const newUnread = chatId !== activeChatId ? currentUnread + 1 : 0;
+        await chatRouteGate.runtime.touchMetadata(req, chatId, {
+          displayTime: 'Just now',
+          unread: newUnread,
         });
         return;
       }
