@@ -55,6 +55,13 @@ test('API release hardening protects and validates the real request path', async
       sessionStore: 'disabled',
       rateLimitStore: 'disabled',
       auditService: 'disabled',
+      channelAdapters: 'simulated',
+      adapterHealth: {
+        whatsapp: { status: 'ok', provider: 'whatsapp', mode: 'simulated' },
+        line: { status: 'ok', provider: 'line', mode: 'simulated' },
+        messenger: { status: 'ok', provider: 'messenger', mode: 'simulated' },
+        tiktok: { status: 'ok', provider: 'tiktok', mode: 'simulated' },
+      },
     },
   });
   assert.equal(health.headers.get('x-content-type-options'), 'nosniff');
@@ -183,6 +190,7 @@ test('API release hardening protects and validates the real request path', async
       sessionStore: 'disabled',
       rateLimitStore: 'disabled',
       auditService: 'disabled',
+      channelAdapters: 'simulated',
     },
   });
   assert.equal(await readFile(databaseFile, 'utf8'), '{"broken": true');

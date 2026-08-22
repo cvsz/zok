@@ -14,6 +14,9 @@ import {
   overlayPostgresMessages,
 } from './server/storage/postgres/chat-route-gate.js';
 import { createCampaignsRepository } from './server/storage/postgres/campaigns-repository.js';
+import { createCampaignWorker } from './server/campaigns/campaign-worker.js';
+import { createCampaignScheduler as _createCampaignScheduler } from './server/campaigns/campaign-scheduler.js';
+import { createCampaignExecutor as _createCampaignExecutor } from './server/campaigns/campaign-executor.js';
 import { createIntegrationsRepository } from './server/storage/postgres/integrations-repository.js';
 import { createAiConfigRepository } from './server/storage/postgres/ai-config-repository.js';
 import { createFlowNodesRepository } from './server/storage/postgres/flow-nodes-repository.js';
@@ -25,6 +28,7 @@ import { createIdempotencyStore } from './server/channels/idempotency-store.js';
 import { createConsentChecker } from './server/channels/consent-checker.js';
 import { verifyWebhookSignature, getExpectedSignatureHeader } from './server/channels/webhook-verifier.js';
 import { validateInboundEvent, buildIdempotencyKey, INBOUND_EVENT_TYPES } from './server/channels/channel-contracts.js';
+import { createAdapterFactory } from './server/channels/adapter-factory.js';
 import { hashToken } from './server/storage/postgres/session-store.js';
 import { createRateLimitStore } from './server/storage/postgres/rate-limit-store.js';
 import { createLogger } from './server/observability/logger.js';
@@ -36,6 +40,10 @@ import { createAiApproval } from './server/ai/ai-approval.js';
 import { createDataExport } from './server/privacy/data-export.js';
 import { createDataDeletion } from './server/privacy/data-deletion.js';
 import { createRetentionPolicy } from './server/privacy/retention-policy.js';
+import { createAttributionEngine } from './server/commerce/attribution-engine.js';
+import { createReconciliationEngine } from './server/commerce/reconciliation.js';
+import { createShopifyAdapter } from './server/commerce/adapters/shopify-adapter.js';
+import { createTikTokShopAdapter } from './server/commerce/adapters/tiktok-shop-adapter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -365,6 +373,16 @@ app.post('/api/webhooks/messenger', async (req, res) => {
 app.post('/api/webhooks/tiktok', async (req, res) => {
   const secret = process.env.ZOK_TIKTOK_WEBHOOK_SECRET || 'dev-tiktok-secret';
   return handleWebhook('tiktok', secret, req, res);
+});
+
+app.post('/api/webhooks/shopify', async (req, res) => {
+  const secret = process.env.ZOK_SHOPIFY_WEBHOOK_SECRET || 'dev-shopify-secret';
+  return handleWebhook('shopify', secret, req, res);
+});
+
+app.post('/api/webhooks/tiktok-shop', async (req, res) => {
+  const secret = process.env.ZOK_TIKTOK_SHOP_WEBHOOK_SECRET || 'dev-tiktok-shop-secret';
+  return handleWebhook('tiktok-shop', secret, req, res);
 });
 
 app.use('/api', requireAuth);
@@ -723,6 +741,15 @@ try {
   appLogger.warn('Failed to initialize retention policy', { error: error.message });
 }
 
+let campaignWorker = null;
+if (postgresPool) {
+  try {
+    campaignWorker = createCampaignWorker({ pool: postgresPool, concurrency: 4 });
+  } catch (error) {
+    appLogger.warn('Failed to initialize campaign worker', { error: error.message });
+  }
+}
+
 app.use((req, res, next) => {
   req.requestId = randomUUID();
   req.tenantId = null;
@@ -753,12 +780,18 @@ app.use((req, res, next) => {
 
 let idempotencyStore = null;
 let consentChecker = null;
+let adapterFactory = null;
 let aiTelemetry = null;
 let aiApproval = null;
 let governedAIService = null;
 if (postgresPool) {
   idempotencyStore = createIdempotencyStore(postgresPool);
   consentChecker = createConsentChecker(postgresPool);
+  try {
+    adapterFactory = createAdapterFactory();
+  } catch (error) {
+    appLogger.error('Failed to initialize adapter factory', { error: error.message });
+  }
   try {
     aiTelemetry = createAiTelemetry(postgresPool);
     aiApproval = createAiApproval(postgresPool);
@@ -769,6 +802,55 @@ if (postgresPool) {
 } else {
   idempotencyStore = createIdempotencyStore(null);
   consentChecker = createConsentChecker(null);
+  try {
+    adapterFactory = createAdapterFactory();
+  } catch (error) {
+    appLogger.error('Failed to initialize adapter factory', { error: error.message });
+  }
+}
+
+let attributionEngine = null;
+let reconciliationEngine = null;
+let shopifyAdapter = null;
+let tiktokAdapter = null;
+
+if (postgresPool) {
+  try {
+    attributionEngine = createAttributionEngine({
+      postgresPool,
+      jsonStorage: storage,
+      logger: appLogger,
+    });
+  } catch (error) {
+    appLogger.error('Failed to initialize attribution engine', { error: error.message });
+  }
+  try {
+    reconciliationEngine = createReconciliationEngine({
+      postgresPool,
+      jsonStorage: storage,
+      logger: appLogger,
+    });
+  } catch (error) {
+    appLogger.error('Failed to initialize reconciliation engine', { error: error.message });
+  }
+  try {
+    shopifyAdapter = createShopifyAdapter({
+      postgresPool,
+      jsonStorage: storage,
+      logger: appLogger,
+    });
+  } catch (error) {
+    appLogger.error('Failed to initialize Shopify adapter', { error: error.message });
+  }
+  try {
+    tiktokAdapter = createTikTokShopAdapter({
+      postgresPool,
+      jsonStorage: storage,
+      logger: appLogger,
+    });
+  } catch (error) {
+    appLogger.error('Failed to initialize TikTok Shop adapter', { error: error.message });
+  }
 }
 
 async function readDB() {
@@ -900,10 +982,22 @@ app.get('/api/health', async (_req, res) => {
     sessionStore: sessionStore ? 'connected' : 'disabled',
     rateLimitStore: rateLimitStore ? 'connected' : 'disabled',
     auditService: auditService ? 'connected' : 'disabled',
+    channelAdapters: adapterFactory ? (adapterFactory.mode === 'real' ? 'real' : 'simulated') : 'disabled',
   };
   try {
     await readDB();
     dependencies.database = 'ok';
+
+    if (adapterFactory) {
+      try {
+        const adapterHealth = await adapterFactory.healthChecks();
+        dependencies.adapterHealth = adapterHealth;
+      } catch (adapterError) {
+        appLogger.error('adapter health check failed', { error: adapterError.message });
+        dependencies.adapterHealth = { error: adapterError.message };
+      }
+    }
+
     return res.json({ status: 'ok', service: 'zok-api', environment: NODE_ENV, dependencies });
   } catch (error) {
     appLogger.error('health check failed', { error: error.message });
@@ -1756,6 +1850,191 @@ app.post('/api/campaigns', ...rbacGuard('campaigns:write'), async (req, res) => 
   return res.status(201).json(newCamp);
 });
 
+app.post('/api/campaigns/:id/start', ...rbacGuard('campaigns:write'), async (req, res) => {
+  const tenantId = req.user?.tenantId;
+  if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+
+  const campaignId = req.params.id;
+  if (!campaignId) return res.status(400).json({ error: 'Campaign id is required' });
+
+  try {
+    if (chatRouteGate.mode === 'postgres' && postgresPool) {
+      const client = await postgresPool.connect();
+      try {
+        await client.query('BEGIN');
+        const repo = createCampaignsRepository({ ...client, tenantId });
+        const campaign = await repo.updateStatus(campaignId, 'running');
+        if (!campaign) {
+          await client.query('ROLLBACK');
+          return res.status(404).json({ error: 'Campaign not found' });
+        }
+        await client.query(
+          `INSERT INTO campaign_executions (tenant_id, campaign_id, contact_id, status, action_type, payload)
+           SELECT $1, $2, id, 'pending', 'send_message', jsonb_build_object('channel', $3, 'data', jsonb_build_object('to', external_id))
+           FROM contacts
+           WHERE tenant_id = $1 AND deleted_at IS NULL
+           ON CONFLICT DO NOTHING`,
+          [tenantId, campaignId, campaign.channel]
+        );
+        await client.query('COMMIT');
+        return res.json(campaign);
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+
+    const db = await readDB();
+    const campaign = db.campaigns.find(c => c.id === Number(campaignId));
+    if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+    campaign.status = 'running';
+    return res.json(campaign);
+  } catch (error) {
+    appLogger.error('start campaign failed', { method: req.method, url: req.originalUrl, error: error.message });
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/campaigns/:id/pause', ...rbacGuard('campaigns:write'), async (req, res) => {
+  const tenantId = req.user?.tenantId;
+  if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+
+  const campaignId = req.params.id;
+  if (!campaignId) return res.status(400).json({ error: 'Campaign id is required' });
+
+  try {
+    if (chatRouteGate.mode === 'postgres' && postgresPool) {
+      const client = await postgresPool.connect();
+      try {
+        const repo = createCampaignsRepository({ ...client, tenantId });
+        const campaign = await repo.updateStatus(campaignId, 'paused');
+        if (!campaign) {
+          client.release();
+          return res.status(404).json({ error: 'Campaign not found' });
+        }
+        client.release();
+        return res.json(campaign);
+      } catch (error) {
+        client.release();
+        throw error;
+      }
+    }
+
+    const db = await readDB();
+    const campaign = db.campaigns.find(c => c.id === Number(campaignId));
+    if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+    campaign.status = 'paused';
+    return res.json(campaign);
+  } catch (error) {
+    appLogger.error('pause campaign failed', { method: req.method, url: req.originalUrl, error: error.message });
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/campaigns/:id/resume', ...rbacGuard('campaigns:write'), async (req, res) => {
+  const tenantId = req.user?.tenantId;
+  if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+
+  const campaignId = req.params.id;
+  if (!campaignId) return res.status(400).json({ error: 'Campaign id is required' });
+
+  try {
+    if (chatRouteGate.mode === 'postgres' && postgresPool) {
+      const client = await postgresPool.connect();
+      try {
+        const repo = createCampaignsRepository({ ...client, tenantId });
+        const campaign = await repo.updateStatus(campaignId, 'running');
+        if (!campaign) {
+          client.release();
+          return res.status(404).json({ error: 'Campaign not found' });
+        }
+        client.release();
+        return res.json(campaign);
+      } catch (error) {
+        client.release();
+        throw error;
+      }
+    }
+
+    const db = await readDB();
+    const campaign = db.campaigns.find(c => c.id === Number(campaignId));
+    if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+    campaign.status = 'running';
+    return res.json(campaign);
+  } catch (error) {
+    appLogger.error('resume campaign failed', { method: req.method, url: req.originalUrl, error: error.message });
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/campaigns/:id/executions', requireAuth, requireCsrf, async (req, res) => {
+  const tenantId = req.user?.tenantId;
+  if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+
+  const campaignId = req.params.id;
+  if (!campaignId) return res.status(400).json({ error: 'Campaign id is required' });
+
+  const limit = req.query.limit ? Number(req.query.limit) : 50;
+  const offset = req.query.offset ? Number(req.query.offset) : 0;
+
+  try {
+    if (chatRouteGate.mode === 'postgres' && postgresPool) {
+      const client = await postgresPool.connect();
+      try {
+        const executionsResult = await client.query(
+          `SELECT id, campaign_id AS "campaignId", contact_id AS "contactId", status, attempt, max_attempts,
+             last_error AS "lastError", scheduled_at AS "scheduledAt", executed_at AS "executedAt",
+             completed_at AS "completedAt", metadata, created_at AS "createdAt", updated_at AS "updatedAt"
+           FROM campaign_executions
+           WHERE tenant_id = $1 AND campaign_id = $2
+           ORDER BY created_at DESC
+           LIMIT $3 OFFSET $4`,
+          [tenantId, campaignId, limit, offset]
+        );
+
+        const deadLetterResult = await client.query(
+          `SELECT id, campaign_id AS "campaignId", contact_id AS "contactId", reason, retry_count AS "retryCount",
+             last_error AS "lastError", payload, created_at AS "createdAt", updated_at AS "updatedAt"
+           FROM dead_letter_queue
+           WHERE tenant_id = $1 AND campaign_id = $2
+           ORDER BY created_at DESC
+           LIMIT $3 OFFSET $4`,
+          [tenantId, campaignId, limit, offset]
+        );
+
+        client.release();
+        return res.json({
+          executions: executionsResult.rows,
+          deadLetters: deadLetterResult.rows,
+        });
+      } catch (error) {
+        client.release();
+        throw error;
+      }
+    }
+
+    const db = await readDB();
+    res.json({ executions: [], deadLetters: [] });
+  } catch (error) {
+    appLogger.error('list executions failed', { method: req.method, url: req.originalUrl, error: error.message });
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/campaigns/workers/health', requireAuth, requireCsrf, async (req, res) => {
+  if (!campaignWorker) {
+    return res.json({ status: 'disabled', activeWorkers: 0, queueDepth: 0 });
+  }
+
+  return res.json({
+    status: campaignWorker.isHealthy() ? 'healthy' : 'unhealthy',
+    activeWorkers: campaignWorker.getActiveCount(),
+    queueDepth: campaignWorker.getQueueDepth(),
+  });
+});
+
 app.get('/api/integrations', async (req, res) => {
   if (chatRouteGate.mode === 'postgres') {
     const tenantId = req.user?.tenantId;
@@ -1814,6 +2093,191 @@ app.post('/api/integrations/:id/toggle', ...rbacGuard('integrations:write'), asy
   return res.status(404).json({ error: 'Integration not found' });
 });
 
+app.get('/api/commerce/attribution', requireAuth, requireCsrf, async (req, res) => {
+  if (!attributionEngine) {
+    return res.status(503).json({ error: 'Attribution engine is not available' });
+  }
+
+  const tenantId = req.user?.tenantId;
+  if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+
+  const { contactId, channel, model, startDate, endDate, limit, offset } = req.query;
+
+  try {
+    const report = await attributionEngine.getReport({
+      tenantId,
+      contactId: typeof contactId === 'string' ? contactId : null,
+      channel: typeof channel === 'string' ? channel : null,
+      model: typeof model === 'string' ? model : null,
+      startDate: typeof startDate === 'string' ? startDate : null,
+      endDate: typeof endDate === 'string' ? endDate : null,
+      limit: limit ? Number(limit) : 100,
+      offset: offset ? Number(offset) : 0,
+    });
+    return res.json(report);
+  } catch (error) {
+    appLogger.error('attribution report failed', { error: error.message });
+    return res.status(error.status || 500).json({ error: error.message || 'Internal server error' });
+  }
+});
+
+app.post('/api/commerce/attribution/touchpoints', requireAuth, requireCsrf, async (req, res) => {
+  if (!attributionEngine) {
+    return res.status(503).json({ error: 'Attribution engine is not available' });
+  }
+
+  const tenantId = req.user?.tenantId;
+  if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+
+  const { contactId, channel, eventType, campaignId, messageId, metadata, occurredAt } = req.body || {};
+
+  try {
+    const touchpoint = await attributionEngine.recordTouchpoint({
+      tenantId,
+      contactId,
+      channel,
+      eventType,
+      campaignId,
+      messageId,
+      metadata,
+      occurredAt,
+    });
+    return res.status(201).json(touchpoint);
+  } catch (error) {
+    appLogger.error('record touchpoint failed', { error: error.message });
+    return res.status(error.status || 400).json({ error: error.message || 'Invalid touchpoint' });
+  }
+});
+
+app.post('/api/commerce/reconcile', requireAuth, requireCsrf, async (req, res) => {
+  if (!reconciliationEngine) {
+    return res.status(503).json({ error: 'Reconciliation engine is not available' });
+  }
+
+  const tenantId = req.user?.tenantId;
+  if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+
+  const { platformOrders, mode } = req.body || {};
+  if (!Array.isArray(platformOrders)) {
+    return res.status(400).json({ error: 'platformOrders must be an array' });
+  }
+
+  try {
+    const results = await reconciliationEngine.reconcileOrders({
+      tenantId,
+      platformOrders,
+      mode: typeof mode === 'string' ? mode : 'automatic',
+    });
+    return res.json({ results, count: results.length });
+  } catch (error) {
+    appLogger.error('reconciliation failed', { error: error.message });
+    return res.status(error.status || 500).json({ error: error.message || 'Internal server error' });
+  }
+});
+
+app.get('/api/commerce/reconciliation-report', requireAuth, requireCsrf, async (req, res) => {
+  if (!reconciliationEngine) {
+    return res.status(503).json({ error: 'Reconciliation engine is not available' });
+  }
+
+  const tenantId = req.user?.tenantId;
+  if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+
+  const { status, platform, startDate, endDate, limit, offset } = req.query;
+
+  try {
+    const report = await reconciliationEngine.getReconciliationReport({
+      tenantId,
+      status: typeof status === 'string' ? status : null,
+      platform: typeof platform === 'string' ? platform : null,
+      startDate: typeof startDate === 'string' ? startDate : null,
+      endDate: typeof endDate === 'string' ? endDate : null,
+      limit: limit ? Number(limit) : 100,
+      offset: offset ? Number(offset) : 0,
+    });
+    return res.json(report);
+  } catch (error) {
+    appLogger.error('reconciliation report failed', { error: error.message });
+    return res.status(error.status || 500).json({ error: error.message || 'Internal server error' });
+  }
+});
+
+app.post('/api/commerce/reconciliation/:id/resolve', requireAuth, requireCsrf, async (req, res) => {
+  if (!reconciliationEngine) {
+    return res.status(503).json({ error: 'Reconciliation engine is not available' });
+  }
+
+  const tenantId = req.user?.tenantId;
+  if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+
+  const { id } = req.params;
+  const { resolution } = req.body || {};
+
+  try {
+    const result = await reconciliationEngine.resolveReconciliation(tenantId, id, resolution);
+    return res.json(result);
+  } catch (error) {
+    appLogger.error('resolve reconciliation failed', { error: error.message });
+    return res.status(error.status || 500).json({ error: error.message || 'Internal server error' });
+  }
+});
+
+app.post('/api/webhooks/shopify/orders/create', requireAuth, async (req, res) => {
+  const tenantId = req.user?.tenantId;
+  if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+  if (!shopifyAdapter) return res.status(503).json({ error: 'Shopify adapter is not available' });
+
+  try {
+    const result = await shopifyAdapter.handleOrderWebhook(tenantId, req.body);
+    return res.status(201).json(result);
+  } catch (error) {
+    appLogger.error('shopify order webhook failed', { error: error.message });
+    return res.status(error.status || 500).json({ error: error.message || 'Internal server error' });
+  }
+});
+
+app.post('/api/webhooks/shopify/inventory/update', requireAuth, async (req, res) => {
+  const tenantId = req.user?.tenantId;
+  if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+  if (!shopifyAdapter) return res.status(503).json({ error: 'Shopify adapter is not available' });
+
+  try {
+    const result = await shopifyAdapter.handleInventoryWebhook(tenantId, req.body);
+    return res.json(result);
+  } catch (error) {
+    appLogger.error('shopify inventory webhook failed', { error: error.message });
+    return res.status(error.status || 500).json({ error: error.message || 'Internal server error' });
+  }
+});
+
+app.post('/api/webhooks/tiktok-shop/orders/create', requireAuth, async (req, res) => {
+  const tenantId = req.user?.tenantId;
+  if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+  if (!tiktokAdapter) return res.status(503).json({ error: 'TikTok Shop adapter is not available' });
+
+  try {
+    const result = await tiktokAdapter.handleFulfillmentWebhook(tenantId, req.body);
+    return res.json(result);
+  } catch (error) {
+    appLogger.error('tiktok shop order webhook failed', { error: error.message });
+    return res.status(error.status || 500).json({ error: error.message || 'Internal server error' });
+  }
+});
+
+app.post('/api/webhooks/tiktok-shop/shop/status', requireAuth, async (req, res) => {
+  const tenantId = req.user?.tenantId;
+  if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+  if (!tiktokAdapter) return res.status(503).json({ error: 'TikTok Shop adapter is not available' });
+
+  try {
+    const result = await tiktokAdapter.handleShopStatusChange(tenantId, req.body);
+    return res.json(result);
+  } catch (error) {
+    appLogger.error('tiktok shop status webhook failed', { error: error.message });
+    return res.status(error.status || 500).json({ error: error.message || 'Internal server error' });
+  }
+});
+
 app.get('/api/consent/:contactId', async (req, res) => {
   const contactId = req.params.contactId;
   if (!contactId || typeof contactId !== 'string') {
@@ -1863,6 +2327,66 @@ app.post('/api/consent/:contactId', ...rbacGuard('integrations:write'), async (r
 
   const record = await consentChecker.setConsent(contactId, channel, status, tenantId);
   return res.status(201).json(record);
+});
+
+app.post('/api/channels/send', ...rbacGuard('integrations:write'), async (req, res) => {
+  const { provider, contactId, type, payload } = req.body || {};
+
+  if (!provider || typeof provider !== 'string') {
+    return res.status(400).json({ error: 'provider is required' });
+  }
+  if (!['whatsapp', 'line', 'messenger', 'tiktok'].includes(provider)) {
+    return res.status(400).json({ error: 'Invalid provider' });
+  }
+  if (!contactId || typeof contactId !== 'string') {
+    return res.status(400).json({ error: 'contactId is required' });
+  }
+  if (!type || typeof type !== 'string') {
+    return res.status(400).json({ error: 'type is required' });
+  }
+  if (!payload || typeof payload !== 'object') {
+    return res.status(400).json({ error: 'payload must be an object' });
+  }
+
+  if (!adapterFactory) {
+    return res.status(503).json({ error: 'Channel adapter factory is not available' });
+  }
+
+  try {
+    const adapter = adapterFactory.getAdapter(provider);
+    let result;
+
+    switch (type) {
+      case 'text':
+        result = await adapter.sendText(contactId, payload.text || '');
+        break;
+      case 'image':
+        result = await adapter.sendImage(contactId, payload.mediaUrl || payload.imageUrl || '', payload.caption || '');
+        break;
+      case 'document':
+        result = await adapter.sendDocument(contactId, payload.mediaUrl || payload.documentUrl || '', payload.filename || '');
+        break;
+      case 'template':
+        result = await adapter.sendTemplate(contactId, payload.templateName || '', payload.templateData || {});
+        break;
+      case 'quick_replies':
+        result = await adapter.sendQuickReplies(contactId, payload.text || '', payload.quickReplies || []);
+        break;
+      default:
+        return res.status(400).json({ error: `Unsupported message type: ${type}` });
+    }
+
+    res.status(200).json({
+      provider,
+      contactId,
+      type,
+      result,
+      mode: adapterFactory.mode,
+    });
+  } catch (error) {
+    appLogger.error('channel send failed', { provider, contactId, type, error: error.message });
+    res.status(error.status || 500).json({ error: error.message || 'Channel send failed' });
+  }
 });
 
 function requireOwner(req, res, next) {
@@ -1995,6 +2519,14 @@ export function startServer(port = PORT) {
     server.once('close', () => {
       retentionPolicy.stopScheduler();
     });
+    if (campaignWorker) {
+      campaignWorker.start().catch((error) => {
+        appLogger.error('Failed to start campaign worker', { error: error.message });
+      });
+      server.once('close', () => {
+        void campaignWorker.stop();
+      });
+    }
   }
   return server;
 }

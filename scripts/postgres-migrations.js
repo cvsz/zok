@@ -95,6 +95,22 @@ export async function rollbackSoftDeleteMigration(databaseUrl) {
   await executeMigrationFile(databaseUrl, '008_soft_delete.down.sql');
 }
 
+export async function applyCommerceAttributionMigration(databaseUrl) {
+  await executeMigrationFile(databaseUrl, '009_commerce_attribution.up.sql');
+}
+
+export async function rollbackCommerceAttributionMigration(databaseUrl) {
+  await executeMigrationFile(databaseUrl, '009_commerce_attribution.down.sql');
+}
+
+export async function applyCampaignWorkersMigration(databaseUrl) {
+  await executeMigrationFile(databaseUrl, '010_campaign_workers.up.sql');
+}
+
+export async function rollbackCampaignWorkersMigration(databaseUrl) {
+  await executeMigrationFile(databaseUrl, '010_campaign_workers.down.sql');
+}
+
 export async function executeSql(databaseUrl, sql) {
   await runPsql(databaseUrl, ['--quiet', '--command', sql]);
 }

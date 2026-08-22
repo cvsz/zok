@@ -45,5 +45,16 @@ export function createCampaignsRepository(tx) {
     return result.rows[0];
   }
 
-  return Object.freeze({ list, create });
+  async function updateStatus(id, status) {
+    const result = await tx.query(`
+      UPDATE campaigns
+      SET status = $2, updated_at = now()
+      WHERE id = $1 AND tenant_id = $3 AND deleted_at IS NULL
+      RETURNING id, name, status, channel, target, scheduled_at AS "scheduledAt",
+        created_at AS "createdAt", updated_at AS "updatedAt"
+    `, [id, status, tx.tenantId]);
+    return result.rows[0] || null;
+  }
+
+  return Object.freeze({ list, create, updateStatus });
 }
