@@ -1,4 +1,6 @@
 DROP TABLE IF EXISTS audit_events;
+DROP TABLE IF EXISTS ai_config;
+DROP TABLE IF EXISTS flow_nodes;
 DROP TABLE IF EXISTS sessions;
 DROP TABLE IF EXISTS consent_records;
 DROP TABLE IF EXISTS integrations;

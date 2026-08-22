@@ -43,6 +43,10 @@ coverage/
 htmlcov/
 .coverage
 
+# Kilo config and worktrees
+.kilo/
+.agents/skills/
+
 # Compressed files
 *.zip
 *.gz

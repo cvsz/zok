@@ -4,6 +4,15 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { pbkdf2Sync } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
+import {
+  applyInitialMigration,
+  applyRelationalIntegrityMigration,
+  applyTenantIsolationMigration,
+  executeSql,
+  rollbackInitialMigration,
+  rollbackRelationalIntegrityMigration,
+  rollbackTenantIsolationMigration,
+} from '../scripts/postgres-migrations.js';
 
 const password = 'test-password-1234';
 const tenantId = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb';
@@ -167,6 +176,117 @@ test('API release hardening protects and validates the real request path', async
 
   const afterLogout = await fetch(`${baseUrl}/api/chats`, { headers: authenticatedHeaders });
   assert.equal(afterLogout.status, 401);
+});
+
+test('PostgreSQL mode does not mutate JSON for campaigns, integrations, ai-config, and flow-nodes routes', {
+  skip: process.env.ZOK_POSTGRES_TEST_URL ? false : 'ZOK_POSTGRES_TEST_URL is not configured',
+}, async () => {
+  const appPassword = 'zok-json-immutability-test';
+  const databaseUrl = process.env.ZOK_POSTGRES_TEST_URL;
+  const adminUrl = new URL(databaseUrl);
+  adminUrl.pathname = '/postgres';
+  const isolatedUrl = new URL(databaseUrl);
+  isolatedUrl.pathname = '/zok_json_immutability_test';
+  const appUrl = new URL(isolatedUrl);
+  appUrl.username = 'zok_json_immutability_test';
+  appUrl.password = appPassword;
+
+  await executeSql(adminUrl.toString(), 'DROP DATABASE IF EXISTS zok_json_immutability_test WITH (FORCE);');
+  await executeSql(adminUrl.toString(), 'DROP ROLE IF EXISTS zok_json_immutability_test;');
+  await executeSql(adminUrl.toString(), 'CREATE DATABASE zok_json_immutability_test;');
+  await applyInitialMigration(isolatedUrl.toString());
+
+  await executeSql(isolatedUrl.toString(), `
+    INSERT INTO tenants (id, slug, name) VALUES ('${tenantId}', 'json-immutability', 'JSON Immutability');
+    CREATE ROLE zok_json_immutability_test LOGIN PASSWORD '${appPassword}' NOSUPERUSER NOBYPASSRLS;
+    GRANT USAGE ON SCHEMA public TO zok_json_immutability_test;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO zok_json_immutability_test;
+  `);
+  await applyTenantIsolationMigration(isolatedUrl.toString());
+  await applyRelationalIntegrityMigration(isolatedUrl.toString());
+
+  const testDir = await mkdtemp(path.join(os.tmpdir(), 'zok-json-immutable-'));
+  const dbFile = path.join(testDir, 'db.json');
+  await writeFile(dbFile, JSON.stringify({
+    chats: [],
+    aiConfig: { agentName: 'Original', persona: 'sales', knowledgeBase: 'Original KB', qaPairs: [] },
+    flowNodes: [],
+    campaigns: [],
+    integrations: [],
+    syncLogs: [],
+  }, null, 2), 'utf8');
+
+  process.env.ZOK_DB_FILE = dbFile;
+  process.env.ZOK_CHAT_STORAGE = 'postgres';
+  process.env.ZOK_POSTGRES_URL = appUrl.toString();
+
+  let postgresServer;
+  try {
+    const { startServer } = await import('../server.js');
+    postgresServer = startServer(0);
+    await new Promise(resolve => postgresServer.once('listening', resolve));
+    const baseUrl = `http://127.0.0.1:${postgresServer.address().port}`;
+
+    const login = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'admin@example.test', password }),
+    });
+    assert.equal(login.status, 200);
+    const setCookie = login.headers.get('set-cookie');
+    assert.ok(setCookie);
+    const cookies = `zok_session=${cookieValue(setCookie, 'zok_session')}; zok_csrf=${cookieValue(setCookie, 'zok_csrf')}`;
+    const csrf = cookieValue(setCookie, 'zok_csrf');
+    const headers = { Cookie: cookies, 'X-CSRF-Token': csrf, 'Content-Type': 'application/json' };
+
+    const beforeJson = JSON.parse(await readFile(dbFile, 'utf8'));
+
+    const campaigns = await fetch(`${baseUrl}/api/campaigns`, { headers: { Cookie: cookies } });
+    assert.equal(campaigns.status, 200);
+
+    const createCampaign = await fetch(`${baseUrl}/api/campaigns`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ name: 'Postgres Campaign', channel: 'line', target: 'Test' }),
+    });
+    assert.equal(createCampaign.status, 201);
+
+    const integrations = await fetch(`${baseUrl}/api/integrations`, { headers: { Cookie: cookies } });
+    assert.equal(integrations.status, 200);
+
+    const aiConfig = await fetch(`${baseUrl}/api/ai-config`, { headers: { Cookie: cookies } });
+    assert.equal(aiConfig.status, 200);
+
+    const updateAiConfig = await fetch(`${baseUrl}/api/ai-config`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ agentName: 'New Agent', persona: 'support', knowledgeBase: 'New KB', qaPairs: [] }),
+    });
+    assert.equal(updateAiConfig.status, 200);
+
+    const flowNodes = await fetch(`${baseUrl}/api/flow-nodes`, { headers: { Cookie: cookies } });
+    assert.equal(flowNodes.status, 200);
+
+    const updateFlowNodes = await fetch(`${baseUrl}/api/flow-nodes`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify([{ id: 'node-1', type: 'trigger', title: 'T', x: 0, y: 0, details: {} }]),
+    });
+    assert.equal(updateFlowNodes.status, 200);
+
+    const afterJson = JSON.parse(await readFile(dbFile, 'utf8'));
+    assert.deepEqual(afterJson, beforeJson, 'JSON storage must not mutate when PostgreSQL mode is active');
+  } finally {
+    if (postgresServer) await new Promise(resolve => postgresServer.close(resolve));
+    await rm(testDir, { recursive: true, force: true });
+    await rollbackRelationalIntegrityMigration(isolatedUrl.toString()).catch(() => undefined);
+    await rollbackTenantIsolationMigration(isolatedUrl.toString()).catch(() => undefined);
+    await rollbackInitialMigration(isolatedUrl.toString()).catch(() => undefined);
+    await executeSql(adminUrl.toString(), 'DROP DATABASE IF EXISTS zok_json_immutability_test WITH (FORCE);').catch(() => undefined);
+    await executeSql(adminUrl.toString(), 'DROP ROLE IF EXISTS zok_json_immutability_test;').catch(() => undefined);
+    delete process.env.ZOK_CHAT_STORAGE;
+    delete process.env.ZOK_POSTGRES_URL;
+  }
 });
 
 after(async () => {

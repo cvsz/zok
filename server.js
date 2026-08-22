@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import {
   pbkdf2Sync,
   randomBytes,
+  randomUUID,
   timingSafeEqual,
 } from 'node:crypto';
 import { createJsonStorage } from './server/storage/json-storage.js';
@@ -12,6 +13,14 @@ import {
   createChatRouteGate,
   overlayPostgresMessages,
 } from './server/storage/postgres/chat-route-gate.js';
+import { createCampaignsRepository } from './server/storage/postgres/campaigns-repository.js';
+import { createIntegrationsRepository } from './server/storage/postgres/integrations-repository.js';
+import { createAiConfigRepository } from './server/storage/postgres/ai-config-repository.js';
+import { createFlowNodesRepository } from './server/storage/postgres/flow-nodes-repository.js';
+import { createUsersRepository } from './server/storage/postgres/users-repository.js';
+import { createRbacMiddleware, requirePermission } from './server/storage/postgres/rbac-middleware.js';
+import { createAuditService } from './server/storage/postgres/audit-service.js';
+import { createAuditMiddleware } from './server/storage/postgres/audit-middleware.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -65,6 +74,7 @@ if (ALLOWED_ORIGINS.has('*')) {
 }
 const sessions = new Map();
 const rateLimitBuckets = new Map();
+const invitations = new Map();
 
 const PASSWORD_HASH_PREFIX = 'pbkdf2_sha256';
 const PASSWORD_HASH_ITERATIONS = 310000;
@@ -87,7 +97,7 @@ export function createPasswordHash(password) {
   return `${PASSWORD_HASH_PREFIX}$${PASSWORD_HASH_ITERATIONS}$${salt}$${derivedKey}`;
 }
 
-function verifyPassword(password, storedHash) {
+export function verifyPassword(password, storedHash) {
   if (typeof password !== 'string' || typeof storedHash !== 'string') return false;
 
   const [prefix, iterationsValue, salt, expectedValue] = storedHash.split('$');
@@ -230,9 +240,15 @@ function sameOriginOrAllowed(req) {
 }
 
 function requireAuth(req, res, next) {
-  if (req.path === '/health' || req.path === '/auth/config' || (req.path === '/auth/login' && req.method === 'POST')) {
-    return next();
-  }
+  const publicPaths = ['/health', '/auth/config'];
+  const publicMethods = {
+    '/auth/login': 'POST',
+    '/auth/accept-invite': 'POST',
+  };
+
+  if (publicPaths.includes(req.path)) return next();
+  const method = publicMethods[req.path];
+  if (method && req.method === method) return next();
 
   if (!AUTH_CONFIGURED) {
     return res.status(503).json({ error: 'Authentication is not configured' });
@@ -243,6 +259,13 @@ function requireAuth(req, res, next) {
   req.session = session;
   req.user = session.user;
   return next();
+}
+
+function rbacGuard(permission) {
+  if (rbacMiddlewareInstance && permission) {
+    return [requirePermission(permission), rbacMiddlewareInstance];
+  }
+  return [];
 }
 
 function requireCsrf(req, res, next) {
@@ -570,6 +593,32 @@ const chatRouteGate = createChatRouteGate({
   connectionString: CHAT_POSTGRES_URL,
 });
 
+let postgresStorage = null;
+let postgresPool = null;
+let rbacMiddlewareInstance = null;
+
+if (CHAT_STORAGE_MODE === 'postgres' && CHAT_POSTGRES_URL) {
+  try {
+    const { createPostgresPool, createPostgresStorage } = await import('./server/storage/postgres-storage.js');
+    postgresPool = createPostgresPool({ connectionString: CHAT_POSTGRES_URL });
+    postgresStorage = createPostgresStorage({ pool: postgresPool });
+    rbacMiddlewareInstance = createRbacMiddleware(postgresStorage);
+  } catch (error) {
+    console.error('Failed to initialize PostgreSQL RBAC storage:', error.message);
+  }
+}
+
+let auditService = null;
+if (postgresPool) {
+  try {
+    auditService = createAuditService(postgresPool);
+  } catch (error) {
+    console.error('Failed to initialize audit service:', error.message);
+  }
+}
+const auditMiddleware = createAuditMiddleware(postgresPool);
+app.use('/api', auditMiddleware);
+
 async function readDB() {
   return storage.read();
 }
@@ -632,6 +681,24 @@ app.post('/api/auth/login', rateLimit({ windowMs: 15 * 60_000, max: 10 }), (req,
   };
   sessions.set(token, session);
   setAuthCookies(res, session);
+
+  if (auditService) {
+    auditService.emit({
+      tenant_id: session.user.tenantId,
+      actor_user_id: session.user.id || null,
+      action: 'auth.login',
+      resource_type: 'auth',
+      resource_id: session.user.tenantId,
+      request_id: req.requestId || randomUUID(),
+      occurred_at: new Date().toISOString(),
+      metadata: {
+        email: session.user.email,
+        method: 'POST',
+        path: '/api/auth/login',
+      },
+    }).catch(() => {});
+  }
+
   return res.json({ user: session.user });
 });
 
@@ -639,9 +706,307 @@ app.get('/api/auth/me', (req, res) => {
   res.json({ user: req.user });
 });
 
+function generateInviteToken() {
+  return randomBytes(32).toString('base64url');
+}
+
+app.post('/api/auth/invite', rateLimit({ windowMs: 60_000, max: 20 }), async (req, res) => {
+  if (!postgresStorage || !req.user?.tenantId) {
+    return res.status(503).json({ error: 'PostgreSQL storage is required for invitations' });
+  }
+
+  const emailResult = requiredText(req.body?.email, 'Email', 254);
+  const roleResult = requiredText(req.body?.role, 'Role', 120);
+
+  if (emailResult.error || roleResult.error) {
+    return res.status(400).json({ error: emailResult.error || roleResult.error });
+  }
+
+  const email = emailResult.value.toLowerCase();
+  const roleName = roleResult.value.trim();
+  const tenantId = req.user.tenantId;
+
+  try {
+    const normalizedEmail = email.toLowerCase();
+    await postgresStorage.withTenantTransaction(tenantId, async (tx) => {
+      const usersRepo = createUsersRepository(tx);
+      const existing = await usersRepo.findByEmail(normalizedEmail);
+      if (existing) {
+        const error = new Error('User already exists');
+        error.status = 409;
+        throw error;
+      }
+
+      const roleResult = await tx.query(
+        `SELECT id, permissions FROM roles WHERE tenant_id = $1 AND name = $2 LIMIT 1`,
+        [tenantId, roleName]
+      );
+      if (roleResult.rows.length === 0) {
+        const error = new Error('Role not found');
+        error.status = 404;
+        throw error;
+      }
+
+      const token = generateInviteToken();
+      const expiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000;
+      invitations.set(token, {
+        tenantId,
+        email: normalizedEmail,
+        roleId: roleResult.rows[0].id,
+        roleName,
+        permissions: roleResult.rows[0].permissions,
+        createdAt: Date.now(),
+        expiresAt,
+      });
+    });
+
+    res.status(201).json({
+      message: 'Invitation created',
+      inviteToken: invitations.has(generateInviteToken()) ? undefined : undefined,
+    });
+  } catch (error) {
+    if (error.status) return res.status(error.status).json({ error: error.message });
+    console.error(`[${req.method} ${req.originalUrl}]`, error.message);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/auth/accept-invite', rateLimit({ windowMs: 60_000, max: 10 }), async (req, res) => {
+  if (!postgresStorage) {
+    return res.status(503).json({ error: 'PostgreSQL storage is required for invitations' });
+  }
+
+  const tokenResult = requiredText(req.body?.token, 'Token', 255);
+  const passwordResult = requiredText(req.body?.password, 'Password', 256);
+  const displayNameResult = requiredText(req.body?.displayName, 'Display name', 240);
+
+  if (tokenResult.error || passwordResult.error || displayNameResult.error) {
+    return res.status(400).json({ error: tokenResult.error || passwordResult.error || displayNameResult.error });
+  }
+
+  const token = tokenResult.value;
+  const invitation = invitations.get(token);
+
+  if (!invitation || invitation.expiresAt <= Date.now()) {
+    invitations.delete(token);
+    return res.status(410).json({ error: 'Invitation token is invalid or expired' });
+  }
+
+  if (invitation.email !== displayNameResult.value.trim().toLowerCase()) {
+    return res.status(400).json({ error: 'Display name does not match invitation' });
+  }
+
+  try {
+    let newUserId = null;
+    await postgresStorage.withTenantTransaction(invitation.tenantId, async (tx) => {
+      const usersRepo = createUsersRepository(tx);
+      const existing = await usersRepo.findByEmail(invitation.email);
+      if (existing) {
+        const error = new Error('User already exists');
+        error.status = 409;
+        throw error;
+      }
+
+      const user = await usersRepo.create({
+        email: invitation.email,
+        displayName: displayNameResult.value,
+        password: passwordResult.value,
+        status: 'active',
+      });
+      newUserId = user.id;
+
+      await tx.query(
+        `INSERT INTO user_roles (tenant_id, user_id, role_id) VALUES ($1, $2, $3)`,
+        [invitation.tenantId, user.id, invitation.roleId]
+      );
+    });
+
+    invitations.delete(token);
+
+    if (auditService && invitation.tenantId && newUserId) {
+      auditService.emit({
+        tenant_id: invitation.tenantId,
+        actor_user_id: newUserId,
+        action: 'auth.register',
+        resource_type: 'auth',
+        resource_id: newUserId,
+        request_id: req.requestId || randomUUID(),
+        occurred_at: new Date().toISOString(),
+        metadata: {
+          email: invitation.email,
+          method: 'POST',
+          path: '/api/auth/accept-invite',
+        },
+      }).catch(() => {});
+    }
+
+    return res.status(201).json({ message: 'Account created successfully' });
+  } catch (error) {
+    if (error.status) return res.status(error.status).json({ error: error.message });
+    console.error(`[${req.method} ${req.originalUrl}]`, error.message);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/auth/register', rateLimit({ windowMs: 60_000, max: 10 }), async (req, res) => {
+  if (!postgresStorage) {
+    return res.status(503).json({ error: 'PostgreSQL storage is required for registration' });
+  }
+
+  const emailResult = requiredText(req.body?.email, 'Email', 254);
+  const passwordResult = requiredText(req.body?.password, 'Password', 256);
+  const displayNameResult = requiredText(req.body?.displayName, 'Display name', 240);
+  const roleResult = requiredText(req.body?.role, 'Role', 120);
+
+  if (emailResult.error || passwordResult.error || displayNameResult.error || roleResult.error) {
+    return res.status(400).json({ error: emailResult.error || passwordResult.error || displayNameResult.error || roleResult.error });
+  }
+
+  const email = emailResult.value.toLowerCase();
+  const roleName = roleResult.value.trim();
+  const tenantId = req.user?.tenantId;
+
+  if (!tenantId) {
+    return res.status(403).json({ error: 'Tenant context is required' });
+  }
+
+  try {
+    let roleId = null;
+    await postgresStorage.withTenantTransaction(tenantId, async (tx) => {
+      const roleResult = await tx.query(
+        `SELECT id FROM roles WHERE tenant_id = $1 AND name = $2 LIMIT 1`,
+        [tenantId, roleName]
+      );
+      if (roleResult.rows.length === 0) {
+        const error = new Error('Role not found');
+        error.status = 404;
+        throw error;
+      }
+      roleId = roleResult.rows[0].id;
+
+      const usersRepo = createUsersRepository(tx);
+      const existing = await usersRepo.findByEmail(email);
+      if (existing) {
+        const error = new Error('User already exists');
+        error.status = 409;
+        throw error;
+      }
+
+      const user = await usersRepo.create({
+        email,
+        displayName: displayNameResult.value,
+        password: passwordResult.value,
+        status: 'active',
+      });
+
+      await tx.query(
+        `INSERT INTO user_roles (tenant_id, user_id, role_id) VALUES ($1, $2, $3)`,
+        [tenantId, user.id, roleId]
+      );
+    });
+
+    if (auditService && tenantId) {
+      auditService.emit({
+        tenant_id: tenantId,
+        actor_user_id: req.user?.id || null,
+        action: 'auth.register',
+        resource_type: 'auth',
+        resource_id: null,
+        request_id: req.requestId || randomUUID(),
+        occurred_at: new Date().toISOString(),
+        metadata: {
+          email,
+          method: 'POST',
+          path: '/api/auth/register',
+          role: roleName,
+        },
+      }).catch(() => {});
+    }
+
+    return res.status(201).json({ message: 'User registered successfully' });
+  } catch (error) {
+    if (error.status) return res.status(error.status).json({ error: error.message });
+    console.error(`[${req.method} ${req.originalUrl}]`, error.message);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/roles', async (req, res) => {
+  if (!postgresStorage || !req.user?.tenantId) {
+    return res.status(503).json({ error: 'PostgreSQL storage is required for roles' });
+  }
+
+  try {
+    const roles = await postgresStorage.withTenantTransaction(req.user.tenantId, async (tx) => {
+      const result = await tx.query(
+        `SELECT id, name, permissions, created_at AS "createdAt" FROM roles WHERE tenant_id = $1 ORDER BY name ASC`,
+        [req.user.tenantId]
+      );
+      return result.rows;
+    });
+    return res.json(roles);
+  } catch (error) {
+    console.error(`[${req.method} ${req.originalUrl}]`, error.message);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/roles', async (req, res) => {
+  if (!postgresStorage || !req.user?.tenantId) {
+    return res.status(503).json({ error: 'PostgreSQL storage is required for roles' });
+  }
+
+  const nameResult = requiredText(req.body?.name, 'Name', 120);
+  const permissions = req.body?.permissions;
+
+  if (nameResult.error) {
+    return res.status(400).json({ error: nameResult.error });
+  }
+
+  if (!permissions || typeof permissions !== 'object' || Array.isArray(permissions)) {
+    return res.status(400).json({ error: 'permissions must be an object' });
+  }
+
+  try {
+    const role = await postgresStorage.withTenantTransaction(req.user.tenantId, async (tx) => {
+      const result = await tx.query(`
+        INSERT INTO roles (tenant_id, name, permissions)
+        VALUES ($1, $2, $3::jsonb)
+        RETURNING id, name, permissions, created_at AS "createdAt", updated_at AS "updatedAt"
+      `, [req.user.tenantId, nameResult.value.trim(), JSON.stringify(permissions)]);
+      return result.rows[0];
+    });
+
+    return res.status(201).json(role);
+  } catch (error) {
+    if (error.code === '23505') {
+      return res.status(409).json({ error: 'Role already exists for this tenant' });
+    }
+    console.error(`[${req.method} ${req.originalUrl}]`, error.message);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.post('/api/auth/logout', (req, res) => {
   if (req.session?.token) sessions.delete(req.session.token);
   clearAuthCookies(res);
+
+  if (auditService && req.user?.tenantId) {
+    auditService.emit({
+      tenant_id: req.user.tenantId,
+      actor_user_id: req.user.id || null,
+      action: 'auth.logout',
+      resource_type: 'auth',
+      resource_id: null,
+      request_id: req.requestId || randomUUID(),
+      occurred_at: new Date().toISOString(),
+      metadata: {
+        method: 'POST',
+        path: '/api/auth/logout',
+      },
+    }).catch(() => {});
+  }
+
   return res.status(204).end();
 });
 
@@ -657,7 +1022,7 @@ app.get('/api/chats', async (req, res) => {
   return res.json(chats);
 });
 
-app.post('/api/chats/:id/messages', async (req, res) => {
+app.post('/api/chats/:id/messages', ...rbacGuard('chats:write'), async (req, res) => {
   const chatId = parseChatId(req.params.id);
   const textResult = requiredText(req.body?.text, 'Text content');
   const sender = req.body?.sender || 'agent';
@@ -749,7 +1114,7 @@ app.post('/api/chats/:id/messages', async (req, res) => {
   }, 1500);
 });
 
-app.post('/api/chats/:id/read', async (req, res) => {
+app.post('/api/chats/:id/read', ...rbacGuard('chats:write'), async (req, res) => {
   const chatId = parseChatId(req.params.id);
   if (chatId === null) return res.status(400).json({ error: 'Chat id must be a positive integer' });
 
@@ -773,7 +1138,7 @@ app.post('/api/chats/:id/read', async (req, res) => {
   return res.status(404).json({ error: 'Chat not found' });
 });
 
-app.post('/api/chats/:id/tags', async (req, res) => {
+app.post('/api/chats/:id/tags', ...rbacGuard('chats:write'), async (req, res) => {
   const chatId = parseChatId(req.params.id);
   const { tags } = req.body || {};
   if (chatId === null) return res.status(400).json({ error: 'Chat id must be a positive integer' });
@@ -802,11 +1167,20 @@ app.post('/api/chats/:id/tags', async (req, res) => {
 });
 
 app.get('/api/ai-config', async (req, res) => {
+  if (chatRouteGate.mode === 'postgres') {
+    const tenantId = req.user?.tenantId;
+    if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+    const config = await postgresStorage.withTenantTransaction(tenantId, tx => {
+      const repo = createAiConfigRepository(tx);
+      return repo.get();
+    });
+    return res.json(config || {});
+  }
   const db = await readDB();
   res.json(db.aiConfig);
 });
 
-app.post('/api/ai-config', async (req, res) => {
+app.post('/api/ai-config', ...rbacGuard('ai-config:write'), async (req, res) => {
   const { agentName, persona, knowledgeBase, qaPairs } = req.body || {};
   const nameResult = requiredText(agentName, 'agentName', 120);
   const knowledgeResult = requiredText(knowledgeBase, 'knowledgeBase', 10000);
@@ -824,6 +1198,21 @@ app.post('/api/ai-config', async (req, res) => {
     return res.status(400).json({ error: 'qaPairs must contain at most 100 valid question/answer pairs' });
   }
 
+  if (chatRouteGate.mode === 'postgres') {
+    const tenantId = req.user?.tenantId;
+    if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+    const config = await postgresStorage.withTenantTransaction(tenantId, tx => {
+      const repo = createAiConfigRepository(tx);
+      return repo.replace({
+        agentName: nameResult.value,
+        persona,
+        knowledgeBase: knowledgeResult.value,
+        qaPairs: qaPairs.map(pair => ({ q: pair.q.trim(), a: pair.a.trim() })),
+      });
+    });
+    return res.json(config);
+  }
+
   const aiConfig = {
     agentName: nameResult.value,
     persona,
@@ -838,14 +1227,32 @@ app.post('/api/ai-config', async (req, res) => {
 });
 
 app.get('/api/flow-nodes', async (req, res) => {
+  if (chatRouteGate.mode === 'postgres') {
+    const tenantId = req.user?.tenantId;
+    if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+    const nodes = await postgresStorage.withTenantTransaction(tenantId, tx => {
+      const repo = createFlowNodesRepository(tx);
+      return repo.list();
+    });
+    return res.json(nodes);
+  }
   const db = await readDB();
   res.json(db.flowNodes);
 });
 
-app.post('/api/flow-nodes', async (req, res) => {
+app.post('/api/flow-nodes', ...rbacGuard('flow-nodes:write'), async (req, res) => {
   const { nodes } = req.body || {};
   if (!Array.isArray(nodes) || nodes.length > 200 || nodes.some(node => !node || typeof node !== 'object')) {
     return res.status(400).json({ error: 'Nodes must be an array of at most 200 objects' });
+  }
+  if (chatRouteGate.mode === 'postgres') {
+    const tenantId = req.user?.tenantId;
+    if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+    const savedNodes = await postgresStorage.withTenantTransaction(tenantId, tx => {
+      const repo = createFlowNodesRepository(tx);
+      return repo.replace(nodes);
+    });
+    return res.json(savedNodes);
   }
   const savedNodes = await updateDB(db => {
     db.flowNodes = nodes;
@@ -855,11 +1262,20 @@ app.post('/api/flow-nodes', async (req, res) => {
 });
 
 app.get('/api/campaigns', async (req, res) => {
+  if (chatRouteGate.mode === 'postgres') {
+    const tenantId = req.user?.tenantId;
+    if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+    const campaigns = await postgresStorage.withTenantTransaction(tenantId, tx => {
+      const repo = createCampaignsRepository(tx);
+      return repo.list();
+    });
+    return res.json(campaigns);
+  }
   const db = await readDB();
   res.json(db.campaigns);
 });
 
-app.post('/api/campaigns', async (req, res) => {
+app.post('/api/campaigns', ...rbacGuard('campaigns:write'), async (req, res) => {
   const { name, channel, target } = req.body || {};
   const nameResult = requiredText(name, 'name', 160);
   const targetResult = requiredText(target, 'target', 120);
@@ -868,6 +1284,16 @@ app.post('/api/campaigns', async (req, res) => {
   }
   if (!['whatsapp', 'line', 'messenger', 'tiktok', 'shopify'].includes(channel)) {
     return res.status(400).json({ error: 'Invalid campaign channel' });
+  }
+
+  if (chatRouteGate.mode === 'postgres') {
+    const tenantId = req.user?.tenantId;
+    if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+    const campaign = await postgresStorage.withTenantTransaction(tenantId, tx => {
+      const repo = createCampaignsRepository(tx);
+      return repo.create({ name: nameResult.value, channel, target: targetResult.value });
+    });
+    return res.status(201).json(campaign);
   }
 
   const newCamp = await updateDB(db => {
@@ -890,14 +1316,38 @@ app.post('/api/campaigns', async (req, res) => {
 });
 
 app.get('/api/integrations', async (req, res) => {
+  if (chatRouteGate.mode === 'postgres') {
+    const tenantId = req.user?.tenantId;
+    if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+    const integrations = await postgresStorage.withTenantTransaction(tenantId, tx => {
+      const repo = createIntegrationsRepository(tx);
+      return repo.list();
+    });
+    return res.json({ integrations, syncLogs: [] });
+  }
   const db = await readDB();
   res.json({ integrations: db.integrations, syncLogs: db.syncLogs });
 });
 
-app.post('/api/integrations/:id/toggle', async (req, res) => {
+app.post('/api/integrations/:id/toggle', ...rbacGuard('integrations:write'), async (req, res) => {
   const integrationId = req.params.id;
   if (!/^[a-z0-9-]{1,64}$/.test(integrationId)) {
     return res.status(400).json({ error: 'Invalid integration id' });
+  }
+
+  if (chatRouteGate.mode === 'postgres') {
+    const tenantId = req.user?.tenantId;
+    if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+    const result = await postgresStorage.withTenantTransaction(tenantId, async tx => {
+      const repo = createIntegrationsRepository(tx);
+      const existing = await repo.findByProvider(integrationId);
+      if (!existing) return { notFound: true };
+      const toggled = await repo.toggleStatus(existing.id);
+      if (!toggled) return { notFound: true };
+      return { integrations: [toggled], syncLogs: [] };
+    });
+    if (result.notFound) return res.status(404).json({ error: 'Integration not found' });
+    return res.json(result);
   }
 
   const db = await readDB();
@@ -948,9 +1398,9 @@ export function startServer(port = PORT) {
   const server = app.listen(port, '127.0.0.1', () => {
     console.log(`Server is running on port ${server.address().port}`);
   });
-  if (chatRouteGate.mode === 'postgres') {
+  if (postgresStorage) {
     server.once('close', () => {
-      void chatRouteGate.close();
+      void postgresStorage.close();
     });
   }
   return server;
