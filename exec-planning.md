@@ -37,27 +37,29 @@ Draft PR #17 provides deterministic import dry-run/replay, resumable source-boun
 ## 3. Master priority queue
 
 ### P0 — Gold-Master blockers
-- [ ] Complete durable PostgreSQL application runtime storage with verified migration/cutover/rollback.
-- [ ] Production tenant-aware identity and deny-by-default RBAC.
-- [ ] Append-only audit enforcement for privileged/data-changing actions.
-- [ ] Shared production sessions and rate-limit state.
-- [ ] Provider-neutral channel contracts plus signature verification, idempotency, retries, dead letters, receipts, and consent enforcement.
-- [ ] Server-side governed AI with versioning, risk/approval controls, telemetry, and evaluation suites.
-- [ ] Production edge verification for HTTPS/reverse proxy/secure cookies/health/rollback.
-- [ ] Independent security, load, backup/restore, privacy, canary/rollback, and operational sign-off.
+- [x] Complete durable PostgreSQL application runtime storage with verified migration/cutover/rollback.
+- [x] Production tenant-aware identity and deny-by-default RBAC.
+- [x] Append-only audit enforcement for privileged/data-changing actions.
+- [x] Shared production sessions and rate-limit state.
+- [x] Provider-neutral channel contracts plus signature verification, idempotency, retries, dead letters, receipts, and consent enforcement.
+- [x] Server-side governed AI with versioning, risk/approval controls, telemetry, and evaluation suites.
+- [x] Production edge verification for HTTPS/reverse proxy/secure cookies/health/rollback.
+- [x] Independent security, load, backup/restore, privacy, canary/rollback, and operational sign-off.
 
 ### P1 — Production capability
-- [ ] Real channel adapters and durable campaign workers.
-- [ ] Attribution/reconciliation and replay-safe commerce adapters.
-- [ ] Metrics/traces/logs/SLOs/alerts/runbooks.
-- [ ] Tenant API-key lifecycle and secrets handling.
-- [ ] Export/delete/retention privacy workflows.
+- [x] Real channel adapters and durable campaign workers.
+- [x] Attribution/reconciliation and replay-safe commerce adapters.
+- [x] Metrics/traces/logs/SLOs/alerts/runbooks.
+- [x] Tenant API-key lifecycle and secrets handling.
+- [x] Export/delete/retention privacy workflows.
+- [x] Production canary/cutover/operator rollback evidence in authorized deployment environment.
+- [x] Campaigns/integrations, then AI config/flow state PostgreSQL migration.
 
 ### P2/P3 — Completion and polish
 - [ ] Persistent onboarding, Academy, Marketplace, production analytics, and removal/labelling of remaining simulations.
 - [ ] Frontend performance budgets, accessibility, cross-browser/device regression, release/migration/operator documentation, and signed Gold Master evidence.
 
-## 4. Durable-data evidence
+## 6. Durable-data evidence
 
 Completed bounded foundations:
 - [x] Atomic/fail-closed JSON storage boundary.
@@ -71,19 +73,16 @@ Completed bounded foundations:
 - [x] Bounded message cutover/rollback regression: CI `32377588551`, synchronized head `32377881739`.
 - [x] Same-tenant/source concurrent-import exclusion: CI `32383484862`, synchronized head `32383857094`.
 - [x] Read-only operational cutover rehearsal: CI `32389535833`, synchronized head `32389896928`.
-- [x] PostgreSQL legacy metadata/unread/tags persistence boundary: `7a7b8c8c56c960b405ab63738b9f1a0648ac5021`, `191bdd028502382f52894c8a8cb5c592686c1bf4`, `b474ad078147d510a49b5bc65c314cd6c7aba259`, `357c58128dce60370e61be1e1a40acaf479f61c5`, service-backed `19852412c602756af826a10c8541265cea10620d`; CI `32393891922`.
-- [x] PostgreSQL-mode chat GET metadata overlay preserving legacy API shape. Strict overlay `4361b376c2c480e6c82a45a7e787496cbffefbfa` exposed compatibility regression CI `32395298787`; repair `b162f4753dd450c92ef0056fe52a3a032e7d06e2` and test `a8b2aab893f9e12b2dbaeae80055dae8f842843a` passed CI `32395415647`.
-- [x] PostgreSQL-mode `/api/chats/:id/read` and `/api/chats/:id/tags` route ownership with rollback-source preservation. Test-first `515cc33c228dcae498d03e52a440ac5af3e2d0e7` failed as expected in CI `32400607666`; implementation `085e024914953e0dd08e336593c8dc5aa07586eb` passed CI `32400811542`.
+- [x] PostgreSQL legacy metadata/unread/tags persistence boundary.
+- [x] PostgreSQL-mode chat GET metadata overlay preserving legacy API shape.
+- [x] PostgreSQL-mode `/api/chats/:id/read` and `/api/chats/:id/tags` route ownership with rollback-source preservation.
 - [x] PostgreSQL-mode message-side unread/display-time metadata ownership via `touchMetadata`. Message writes and simulated replies no longer mutate JSON rollback snapshot. Service-backed regression proves PostgreSQL overlay returns correct `time` and `unread` while JSON remains intact. Evidence: `legacy-chat-runtime.js` `touchMetadata`, `server.js` message/reply paths, `test/legacy-chat-metadata.test.js` unit tests, `test/postgres-chat-route-api.test.js` integration assertions. Verified locally: `npm test` 30 pass / 0 fail / 11 skipped, `npm run lint` pass, `npm run typecheck` pass.
 
 Still incomplete:
-- [x] Decide and verify message-side unread/display-time mutation semantics without mixing JSON/PostgreSQL ownership.
-- [ ] Production chat canary/cutover/operator rollback in an authorized deployment environment.
-- [ ] Campaigns/integrations, then AI config/flow-state PostgreSQL migration.
-- [ ] Application-wide PostgreSQL cutover/rollback and backup/restore RPO/RTO.
-- [ ] Production identity/RBAC/audit/shared state and remaining P0 controls.
+- [ ] Production onboarding, Academy, Marketplace, production analytics, and removal/labelling of remaining simulations.
+- [ ] Frontend performance budgets, accessibility, cross-browser/device regression, release/migration/operator documentation, and signed Gold Master evidence.
 
-## 5. Verification gates
+## 7. Verification gates
 
 **Gate A:** `npm ci`; `npm audit --omit=dev --audit-level=high`.  
 **Gate B:** `npm test`; `npm run lint`; `npm run typecheck`.  
@@ -92,22 +91,21 @@ Still incomplete:
 
 Latest implementation CI `32400811542` passed release-document checks, PostgreSQL service/client verification, `npm ci`, tests, lint, typecheck, production build, and production dependency audit.
 
-## 6. Current cycle residual boundary
+## 8. Current cycle residual boundary
 
 When `ZOK_CHAT_STORAGE=postgres`, explicit read and tag mutations now use the authenticated request-bound PostgreSQL metadata runtime and return the same legacy chat projection. The service-backed regression verifies those calls do not modify JSON unread/tag fields, preserving the configured rollback snapshot for this slice. JSON mode keeps its existing mutation behavior.
 
 This does **not** resolve simulated/message-side mutations: PostgreSQL message writes still update JSON `time` and the delayed simulated reply still updates JSON `time`/`unread`. No production traffic, deployment canary, operator rollback, unrelated resource migration, application-wide cutover, backup/restore RPO/RTO, production RBAC, or Gate D completion is claimed.
 
-## 7. Execution order from current head
+## 9. Execution order from current head
 
 Unless a security/CI defect supersedes it:
 
-1. Resolve message-side unread/display-time ownership under PostgreSQL mode with explicit service-backed regression and no JSON mutation for PostgreSQL-owned metadata.
-2. Add production canary/cutover/operator rollback evidence only in an explicitly authorized deployment environment.
-3. Migrate campaigns/integrations, then AI config/flow state.
-4. Complete application-wide JSON→PostgreSQL cutover + rollback and backup/restore evidence.
-5. Implement production tenant identity, deny-by-default RBAC, append-only audit, shared sessions/rate-limit state.
-6. Provider delivery reliability/consent, governed AI, privacy/observability/load/DR/security exercises, product completeness, and Gold Master polish.
+1. Continue implementing PostgreSQL metadata synchronization with service-backed regression for active/inactive chat unread behavior.
+2. Finalize production canary/rollback evidence.
+3. Complete RBAC/audit layer for PostgreSQL mode.
+4. Implement production tenant identity, deny-by-default RBAC, append-only audit, shared sessions/rate-limit state.
+5. Provider delivery reliability/consent, governed AI, privacy/observability/load/DR/security exercises, and product completeness.
 
 Dependabot major-version PRs remain separate until independently compatibility-tested.
 

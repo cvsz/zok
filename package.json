@@ -9,7 +9,11 @@
     "start": "concurrently \"node server.js\" \"vite preview --host 127.0.0.1\"",
     "lint": "eslint src server.js test scripts vite.config.js",
     "typecheck": "tsc --noEmit",
-    "test": "node --test 'test/*.test.js' --test-reporter spec",
+    "test": "node --test 'test/*.test.js' 'src/tests/*.test.js' --test-reporter spec",
+    "test:a11y": "node --test 'src/tests/accessibility.test.js' --test-reporter spec",
+    "test:perf": "node --test 'src/tests/performance.test.js' --test-reporter spec",
+    "analyze:bundle": "vite build --mode analyze && source-map-explorer 'dist/**/*.js' --html dist/bundle-analysis.html",
+    "build:analyze": "vite build",
     "dev:vite": "concurrently \"node server.js\" \"vite\"",
     "build:vite": "vite build",
     "preview:vite": "vite preview"

@@ -10,26 +10,40 @@ test('integrations repository lists integrations and toggles status by id', asyn
     tenantId,
     async query(text, values = []) {
       calls.push({ text, values });
-      if (text.includes('UPDATE integrations')) {
-        return { rows: [{ id: 'i1', provider: 'shopify', status: 'connected' }] };
+      if (text.includes('RETURNING id, provider')) {
+        return { rows: [{
+          id: 'i1', provider: 'shopify', externalId: 'shop-1', status: 'connected',
+          config: {}, apiKeyPrefix: 'pk_live_1', hasCredentials: true,
+          createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+        }] };
       }
       if (text.includes('WHERE id = $1')) {
         return { rows: [{ id: 'i1', provider: 'shopify', status: 'disconnected' }] };
       }
       if (text.includes('FROM integrations')) {
-        return { rows: [{ id: 'i1', provider: 'shopify', status: 'disconnected' }] };
+        return { rows: [{
+          id: 'i1', provider: 'shopify', externalId: 'shop-1', status: 'disconnected',
+          config: {}, apiKeyPrefix: null, hasCredentials: false,
+          createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+        }] };
       }
       return { rows: [] };
     },
   };
   const repository = createIntegrationsRepository(tx);
 
-  assert.deepEqual(await repository.list(), [
-    { id: 'i1', provider: 'shopify', status: 'disconnected' },
-  ]);
+  assert.deepEqual(await repository.list(), [{
+    id: 'i1', provider: 'shopify', externalId: 'shop-1', status: 'disconnected',
+    config: {}, apiKey: null, hasCredentials: false,
+    createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+  }]);
   assert.deepEqual(
     await repository.toggleStatus('i1'),
-    { id: 'i1', provider: 'shopify', status: 'connected' },
+    {
+      id: 'i1', provider: 'shopify', externalId: 'shop-1', status: 'connected',
+      config: {}, apiKey: 'pk_live_1…••••', hasCredentials: true,
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    },
   );
 
   assert.ok(calls[0].text.includes('FROM integrations'));

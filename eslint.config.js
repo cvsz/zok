@@ -20,6 +20,10 @@ export default [
         setInterval: 'readonly',
         clearInterval: 'readonly',
         alert: 'readonly',
+        global: 'readonly',
+        PerformanceObserver: 'readonly',
+        performance: 'readonly',
+        requestAnimationFrame: 'readonly',
       },
     },
     rules: {
@@ -42,6 +46,8 @@ export default [
         process: 'readonly',
         setTimeout: 'readonly',
         URL: 'readonly',
+        test: 'readonly',
+        assert: 'readonly',
       },
     },
     rules: {

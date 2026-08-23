@@ -24,6 +24,9 @@ import { createUsersRepository } from './server/storage/postgres/users-repositor
 import { createRbacMiddleware, requirePermission } from './server/storage/postgres/rbac-middleware.js';
 import { createAuditService } from './server/storage/postgres/audit-service.js';
 import { createAuditMiddleware } from './server/storage/postgres/audit-middleware.js';
+import { createApiKeyManager } from './server/security/api-key-manager.js';
+import { createApiKeyMiddleware } from './server/security/api-key-middleware.js';
+import { createSecretsVault } from './server/security/secrets-vault.js';
 import { createIdempotencyStore } from './server/channels/idempotency-store.js';
 import { createConsentChecker } from './server/channels/consent-checker.js';
 import { verifyWebhookSignature, getExpectedSignatureHeader } from './server/channels/webhook-verifier.js';
@@ -44,6 +47,10 @@ import { createAttributionEngine } from './server/commerce/attribution-engine.js
 import { createReconciliationEngine } from './server/commerce/reconciliation.js';
 import { createShopifyAdapter } from './server/commerce/adapters/shopify-adapter.js';
 import { createTikTokShopAdapter } from './server/commerce/adapters/tiktok-shop-adapter.js';
+import { createSecureCookieConfig } from './server/edge/secure-cookies.js';
+import { createReverseProxyConfig } from './server/edge/reverse-proxy.js';
+import { createHealthCheck } from './server/edge/health-check.js';
+import { createRollbackManager } from './server/edge/rollback.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -53,6 +60,9 @@ const PORT = process.env.PORT || 3005;
 const DB_FILE = process.env.ZOK_DB_FILE || path.join(__dirname, 'server', 'db.json');
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const IS_PRODUCTION = NODE_ENV === 'production';
+const secureCookieConfig = createSecureCookieConfig();
+const reverseProxyConfig = createReverseProxyConfig();
+reverseProxyConfig.apply(app);
 const CHAT_STORAGE_MODE = (process.env.ZOK_CHAT_STORAGE || 'json').trim().toLowerCase();
 const CHAT_POSTGRES_URL = (process.env.ZOK_POSTGRES_URL || '').trim();
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -119,15 +129,7 @@ function parseCookies(req) {
 }
 
 function cookieHeader(name, value, options = {}) {
-  const parts = [
-    `${name}=${encodeURIComponent(value)}`,
-    'Path=/',
-    `SameSite=${options.sameSite || 'Strict'}`,
-  ];
-  if (options.httpOnly) parts.push('HttpOnly');
-  if (IS_PRODUCTION) parts.push('Secure');
-  if (options.maxAge !== undefined) parts.push(`Max-Age=${options.maxAge}`);
-  return parts.join('; ');
+  return secureCookieConfig.buildCookie(name, value, options);
 }
 
 function setAuthCookies(res, session) {
@@ -291,6 +293,10 @@ async function requireAuth(req, res, next) {
   const method = publicMethods[req.path];
   if (method && req.method === method) return next();
 
+  if (req.user && req.user.authMethod === 'api-key') {
+    return next();
+  }
+
   if (!AUTH_CONFIGURED) {
     return res.status(503).json({ error: 'Authentication is not configured' });
   }
@@ -313,6 +319,7 @@ function rbacGuard(permission) {
 
 function requireCsrf(req, res, next) {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method) || req.path === '/auth/login') return next();
+  if (req.user && req.user.authMethod === 'api-key') return next();
   if (!sameOriginOrAllowed(req)) return res.status(403).json({ error: 'Origin is not allowed' });
 
   const expected = req.session?.csrfToken;
@@ -339,6 +346,8 @@ app.use((req, res, next) => {
   if (IS_PRODUCTION) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   next();
 });
+
+app.use(reverseProxyConfig.middleware);
 
 app.use('/api', (req, res, next) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -385,6 +394,8 @@ app.post('/api/webhooks/tiktok-shop', async (req, res) => {
   return handleWebhook('tiktok-shop', secret, req, res);
 });
 
+let apiKeyValueImpl = (req, res, next) => next();
+app.use('/api', (req, res, next) => apiKeyValueImpl(req, res, next));
 app.use('/api', requireAuth);
 app.use('/api', requireCsrf);
 
@@ -724,6 +735,10 @@ if (postgresPool) {
 }
 const auditMiddleware = createAuditMiddleware(postgresPool);
 app.use('/api', auditMiddleware);
+apiKeyValueImpl = createApiKeyMiddleware(postgresPool);
+
+let securityMasterKey = process.env.ZOK_SECRETS_MASTER_KEY || null;
+let securityServicesEnabled = Boolean(postgresPool);
 
 const dataExport = createDataExport({ jsonStorage: storage, postgresPool, auditService });
 const dataDeletion = createDataDeletion({ jsonStorage: storage, postgresPool, auditService });
@@ -852,6 +867,22 @@ if (postgresPool) {
     appLogger.error('Failed to initialize TikTok Shop adapter', { error: error.message });
   }
 }
+
+const healthCheck = createHealthCheck({
+  jsonStorage: storage,
+  postgresPool,
+  sessionStore,
+  rateLimitStore,
+  auditService,
+  adapterFactory,
+  campaignWorker,
+});
+
+const rollbackManager = createRollbackManager({
+  pool: postgresPool,
+  logger: appLogger,
+  tenantId: 'global',
+});
 
 async function readDB() {
   return storage.read();
@@ -1003,6 +1034,69 @@ app.get('/api/health', async (_req, res) => {
     appLogger.error('health check failed', { error: error.message });
     dependencies.database = 'error';
     return res.status(503).json({ status: 'degraded', service: 'zok-api', environment: NODE_ENV, dependencies });
+  }
+});
+
+app.get('/health/live', async (_req, res) => {
+  const result = await healthCheck.liveness();
+  const statusCode = result.status === 'healthy' ? 200 : 503;
+  res.status(statusCode).json(result);
+});
+
+app.get('/health/ready', async (_req, res) => {
+  const result = await healthCheck.readiness();
+  const statusCode = result.status === 'ready' || result.status === 'degraded' ? 200 : 503;
+  res.status(statusCode).json(result);
+});
+
+app.post('/admin/rollback', requireAuth, requireOwner, async (req, res) => {
+  const { flagName, percentage, reason } = req.body || {};
+
+  if (!flagName || typeof flagName !== 'string') {
+    return res.status(400).json({ error: 'flagName is required' });
+  }
+
+  const parsedPercentage = Number(percentage);
+  if (!Number.isSafeInteger(parsedPercentage) || parsedPercentage < 0 || parsedPercentage > 100) {
+    return res.status(400).json({ error: 'percentage must be an integer between 0 and 100' });
+  }
+
+  try {
+    const record = await rollbackManager.rollbackFeature(flagName, parsedPercentage, reason || 'manual rollback');
+    return res.status(201).json(record);
+  } catch (error) {
+    appLogger.error('rollback failed', { method: req.method, url: req.originalUrl, error: error.message });
+    return res.status(500).json({ error: 'Rollback failed' });
+  }
+});
+
+app.get('/admin/rollback', requireAuth, requireOwner, async (_req, res) => {
+  try {
+    const statuses = await rollbackManager.getAllStatuses();
+    return res.json(statuses);
+  } catch (error) {
+    appLogger.error('rollback list failed', { error: error.message });
+    return res.status(500).json({ error: 'Failed to list rollback statuses' });
+  }
+});
+
+app.get('/admin/rollback/:flagName', requireAuth, requireOwner, async (req, res) => {
+  try {
+    const status = await rollbackManager.getStatus(req.params.flagName);
+    return res.json(status);
+  } catch (error) {
+    appLogger.error('rollback status failed', { error: error.message });
+    return res.status(500).json({ error: 'Failed to get rollback status' });
+  }
+});
+
+app.post('/admin/rollback/:flagName/emergency', requireAuth, requireOwner, async (req, res) => {
+  try {
+    const record = await rollbackManager.emergencyRollback(req.params.flagName, req.body?.reason || 'emergency rollback');
+    return res.status(201).json(record);
+  } catch (error) {
+    appLogger.error('emergency rollback failed', { method: req.method, url: req.originalUrl, error: error.message });
+    return res.status(500).json({ error: 'Emergency rollback failed' });
   }
 });
 
@@ -2091,6 +2185,126 @@ app.post('/api/integrations/:id/toggle', ...rbacGuard('integrations:write'), asy
 
   if (result) return res.json(result);
   return res.status(404).json({ error: 'Integration not found' });
+});
+
+app.post('/api/security/api-keys', requireAuth, requireCsrf, ...rbacGuard('security:write'), async (req, res) => {
+  if (!securityServicesEnabled) {
+    return res.status(503).json({ error: 'Security services are not available' });
+  }
+  const tenantId = req.user?.tenantId;
+  if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+
+  const { name, expiresInDays } = req.body || {};
+  const expiresArg = expiresInDays === undefined ? undefined : Number(expiresInDays);
+
+  try {
+    const result = await postgresStorage.withTenantTransaction(tenantId, tx => {
+      const manager = createApiKeyManager(tx);
+      return manager.create({ name, expiresInDays: expiresArg });
+    });
+    return res.status(201).json({ key: result.key, apiKey: result.record });
+  } catch (error) {
+    if (error instanceof TypeError || error instanceof RangeError) {
+      return res.status(400).json({ error: error.message });
+    }
+    appLogger.error('api-key create failed', { error: error.message });
+    return res.status(500).json({ error: 'Failed to create API key' });
+  }
+});
+
+app.get('/api/security/api-keys', requireAuth, requireCsrf, ...rbacGuard('security:read'), async (req, res) => {
+  if (!securityServicesEnabled) {
+    return res.status(503).json({ error: 'Security services are not available' });
+  }
+  const tenantId = req.user?.tenantId;
+  if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+
+  try {
+    const records = await postgresStorage.withTenantTransaction(tenantId, tx => {
+      const manager = createApiKeyManager(tx);
+      return manager.list();
+    });
+    return res.json({ apiKeys: records });
+  } catch (error) {
+    appLogger.error('api-key list failed', { error: error.message });
+    return res.status(500).json({ error: 'Failed to list API keys' });
+  }
+});
+
+app.post('/api/security/api-keys/:id/rotate', requireAuth, requireCsrf, ...rbacGuard('security:write'), async (req, res) => {
+  if (!securityServicesEnabled) {
+    return res.status(503).json({ error: 'Security services are not available' });
+  }
+  const tenantId = req.user?.tenantId;
+  if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+
+  const { id } = req.params;
+  const { gracePeriodDays } = req.body || {};
+  const graceArg = gracePeriodDays === undefined ? undefined : Number(gracePeriodDays);
+
+  try {
+    const result = await postgresStorage.withTenantTransaction(tenantId, async tx => {
+      const manager = createApiKeyManager(tx);
+      const existing = await manager.getById(id);
+      if (!existing) return { notFound: true };
+      return manager.rotate(id, { gracePeriodDays: graceArg });
+    });
+    if (result.notFound || !result) return res.status(404).json({ error: 'API key not found' });
+    return res.json({ key: result.key, apiKey: result.record });
+  } catch (error) {
+    if (error instanceof TypeError || error instanceof RangeError) {
+      return res.status(400).json({ error: error.message });
+    }
+    appLogger.error('api-key rotate failed', { error: error.message });
+    return res.status(500).json({ error: 'Failed to rotate API key' });
+  }
+});
+
+app.delete('/api/security/api-keys/:id', requireAuth, requireCsrf, ...rbacGuard('security:write'), async (req, res) => {
+  if (!securityServicesEnabled) {
+    return res.status(503).json({ error: 'Security services are not available' });
+  }
+  const tenantId = req.user?.tenantId;
+  if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+
+  const { id } = req.params;
+  try {
+    const revoked = await postgresStorage.withTenantTransaction(tenantId, tx => {
+      const manager = createApiKeyManager(tx);
+      return manager.revoke(id);
+    });
+    if (!revoked) return res.status(404).json({ error: 'API key not found' });
+    return res.json({ apiKey: revoked });
+  } catch (error) {
+    if (error instanceof TypeError) {
+      return res.status(400).json({ error: error.message });
+    }
+    appLogger.error('api-key revoke failed', { error: error.message });
+    return res.status(500).json({ error: 'Failed to revoke API key' });
+  }
+});
+
+app.get('/api/security/audit', requireAuth, requireCsrf, ...rbacGuard('security:read'), async (req, res) => {
+  if (!securityServicesEnabled) {
+    return res.status(503).json({ error: 'Security services are not available' });
+  }
+  const tenantId = req.user?.tenantId;
+  if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+
+  const { secretId } = req.query;
+  try {
+    const logs = await postgresStorage.withTenantTransaction(tenantId, tx => {
+      const vault = createSecretsVault({ tx, masterKey: securityMasterKey });
+      return vault.listAccessLogs({ secretId: typeof secretId === 'string' ? secretId : null });
+    });
+    return res.json({ audit: logs });
+  } catch (error) {
+    if (error instanceof TypeError) {
+      return res.status(400).json({ error: error.message });
+    }
+    appLogger.error('security audit failed', { error: error.message });
+    return res.status(500).json({ error: 'Failed to retrieve security audit logs' });
+  }
 });
 
 app.get('/api/commerce/attribution', requireAuth, requireCsrf, async (req, res) => {

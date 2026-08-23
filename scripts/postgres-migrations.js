@@ -111,6 +111,14 @@ export async function rollbackCampaignWorkersMigration(databaseUrl) {
   await executeMigrationFile(databaseUrl, '010_campaign_workers.down.sql');
 }
 
+export async function applySecurityMigration(databaseUrl) {
+  await executeMigrationFile(databaseUrl, '011_security.up.sql');
+}
+
+export async function rollbackSecurityMigration(databaseUrl) {
+  await executeMigrationFile(databaseUrl, '011_security.down.sql');
+}
+
 export async function executeSql(databaseUrl, sql) {
   await runPsql(databaseUrl, ['--quiet', '--command', sql]);
 }

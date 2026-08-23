@@ -20,12 +20,33 @@ export function createChatRouteGate({ mode = 'json', connectionString } = {}) {
   const storage = createPostgresStorage({ pool });
   const runtime = createLegacyChatRuntime({ storage });
 
+  async function syncJsonSnapshot() {
+    const chat = await storage.read();
+    const metadata = chat.metadata || {};
+    await storage.update(tx => {
+      tx.chats = chat.chats.map(c =>
+        c.id === parseInt(legacyChatId)
+          ? {
+            ...c,
+            unread: metadata.unread,
+            time: metadata.displayTime || c.time,
+            details: {
+              ...c.details,
+              tags: metadata.tags || c.details.tags
+            }
+          }
+          : c
+      );
+    });
+  }
+
   return Object.freeze({
     mode,
     runtime,
     close() {
       return storage.close();
     },
+    syncJsonSnapshot,
   });
 }
 
