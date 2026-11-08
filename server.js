@@ -30,7 +30,7 @@ import { createSecretsVault } from './server/security/secrets-vault.js';
 import { createIdempotencyStore } from './server/channels/idempotency-store.js';
 import { createConsentChecker } from './server/channels/consent-checker.js';
 import { verifyWebhookSignature, getExpectedSignatureHeader } from './server/channels/webhook-verifier.js';
-import { validateInboundEvent, buildIdempotencyKey, INBOUND_EVENT_TYPES } from './server/channels/channel-contracts.js';
+import { buildIdempotencyKey, INBOUND_EVENT_TYPES } from './server/channels/channel-contracts.js';
 import { createAdapterFactory } from './server/channels/adapter-factory.js';
 import { hashToken } from './server/storage/postgres/session-store.js';
 import { createRateLimitStore } from './server/storage/postgres/rate-limit-store.js';
@@ -2109,7 +2109,7 @@ app.get('/api/campaigns/:id/executions', requireAuth, requireCsrf, async (req, r
       }
     }
 
-    const db = await readDB();
+    await readDB();
     res.json({ executions: [], deadLetters: [] });
   } catch (error) {
     appLogger.error('list executions failed', { method: req.method, url: req.originalUrl, error: error.message });
